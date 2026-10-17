@@ -1,0 +1,6 @@
+{
+  "id": "paseo-plan",
+  "name": "Plan",
+  "description": "While an agent works with a task list, a composer pill shows its plan: the step in progress, how many are done, and the whole list on a tap.",
+  "requirements": { "paseo": ">=0.11.2 <0.12.0" }
+}
