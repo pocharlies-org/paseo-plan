@@ -1,0 +1,6 @@
+{
+  "id": "paseo-plan",
+  "name": "Plan de Claude",
+  "description": "Shows Claude's task list at the end of the conversation with the commands each task runs, like Claude Desktop's plan box.",
+  "requirements": { "paseo": ">=0.11.2 <0.12.0" }
+}
