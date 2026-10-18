@@ -90,7 +90,7 @@ export class PlanState {
     const commands = (key: string) => [...(this.calls.get(key)?.values() ?? [])].slice(-MAX_CALLS);
     const other = commands(OTHER);
     const tasks: PlanData["tasks"] = this.tasks.map((t) => ({ ...t, commands: commands(t.key) }));
-    if (other.length) tasks.unshift({ key: OTHER, text: "Otros comandos", status: "other", commands: other });
+    if (other.length) tasks.unshift({ key: OTHER, text: "", status: "other", commands: other }); // the client words it
     if (!tasks.length) return null;
     // The row is capped at 64 KiB: shed the oldest outputs first.
     const withDetail = tasks.flatMap((t) => t.commands).filter((c) => c.detail);

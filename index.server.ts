@@ -17,7 +17,12 @@ export default function contribute(server: PluginServerContext) {
     if (!l) return;
     live.delete(agentId);
     await l.flush();
-    await l.release();
+    // A turn that ends before the subscription handshake releases it unestablished: that rejection is expected.
+    try {
+      await l.release();
+    } catch (e) {
+      if (!/Subscription released/.test(String((e as Error).message))) throw e;
+    }
   };
 
   server.on("agent.turn_started", async (event, { paseo }) => {
@@ -42,10 +47,17 @@ export default function contribute(server: PluginServerContext) {
     const unsubscribe = agent.timeline.subscribe(({ event: e }) => {
       if (e.type === "timeline" && state.observe(e.item as never)) schedule();
     });
-    live.set(event.agent.id, { release: () => unsubscribe.release(), flush });
-    await unsubscribe.ready;
+    const entry: Live = { release: () => unsubscribe.release(), flush };
+    live.set(event.agent.id, entry);
+    try {
+      await unsubscribe.ready;
+    } catch (e) {
+      if (live.get(event.agent.id) !== entry) return; // the turn ended first and released it: nothing to seed
+      await stop(event.agent.id);
+      throw e;
+    }
     const page = await agent.timeline.refetch({ direction: "before", limit: 200, projection: "projected" });
-    for (const entry of page.entries) state.observe(entry.item as never);
+    for (const row of page.entries) state.observe(row.item as never);
   });
 
   server.on("agent.turn_ended", (event) => stop(event.agent.id));
