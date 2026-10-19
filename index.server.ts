@@ -37,7 +37,12 @@ export default function contribute(server: PluginServerContext) {
       timer = null;
       const data = dirty ? state.data() : null;
       dirty = false;
-      if (data) await agent.timeline.append({ type: "plugin", id: "plan", kind: KIND, version: 1, data });
+      // placement "tail" keeps the plan the last row so streaming text appears above it (SC-2758). The old host
+      // strips the field; the variable dodges the excess-property check of the pinned 0.11.2 types. shortcut: <0.11.2 types>, <bump @getpaseo/client when placement ships>
+      if (data) {
+        const item = { type: "plugin" as const, id: "plan", kind: KIND, version: 1, data, placement: "tail" as const };
+        await agent.timeline.append(item);
+      }
     };
     const schedule = () => {
       dirty = true;
