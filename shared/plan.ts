@@ -24,3 +24,7 @@ export type PlanData = z.output<typeof planSchema>;
 
 // The task tools themselves are the plan, not work done for it.
 export const TASK_TOOLS = new Set(["TodoWrite", "TaskCreate", "TaskUpdate", "TaskList", "TaskGet", "TaskStop"]);
+
+// Tool calls another plugin draws as a card of its own (paseo-rutador's session cards): the plan neither folds them in
+// nor hides their rows, or that card would never reach the timeline (the first transformer to answer wins).
+export const ownCardElsewhere = (name: unknown) => String(name).startsWith("mcp__rutador__");

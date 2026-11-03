@@ -1,4 +1,4 @@
-import { TASK_TOOLS, type PlanData } from "../shared/plan.ts";
+import { TASK_TOOLS, ownCardElsewhere, type PlanData } from "../shared/plan.ts";
 
 interface Item {
   type: string;
@@ -76,7 +76,7 @@ export class PlanState {
       }));
       return true;
     }
-    if (item.type !== "tool_call" || TASK_TOOLS.has(String(item.name))) return false;
+    if (item.type !== "tool_call" || TASK_TOOLS.has(String(item.name)) || ownCardElsewhere(item.name)) return false;
     const callId = String(item.callId);
     const key = this.owner.get(callId) ?? this.tasks.find((t) => t.status === "in_progress")?.key ?? OTHER;
     this.owner.set(callId, key);
