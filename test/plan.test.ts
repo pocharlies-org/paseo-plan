@@ -35,3 +35,10 @@ test("a command carries its output, and the row sheds the oldest outputs past th
   assert.equal(cmds[0].detail, undefined);
   assert.ok(JSON.stringify(p.data()).length <= 60_000);
 });
+
+test("a call another plugin draws as its own card stays out of the plan", () => {
+  const p = new PlanState();
+  p.observe(todo("in_progress"));
+  assert.equal(p.observe(call("s", "", "running", "mcp__rutador__start_session")), false);
+  assert.deepEqual(p.data()!.tasks[0].commands, []);
+});
