@@ -2,8 +2,8 @@ import type {
   PluginButtonContentProps,
   PluginButtonRegistration,
   PluginComposerPillContribution,
+  PluginClientContext,
 } from "@getpaseo/plugin/client";
-import type { PaseoAgent, PaseoApi } from "@getpaseo/client";
 import type { ComponentType } from "react";
 import { planFromTimelineItem, planProgressLabel } from "../shared/plan.ts";
 
@@ -11,8 +11,10 @@ import { planFromTimelineItem, planProgressLabel } from "../shared/plan.ts";
 // the tests hand in a fake. Keeping it free of React makes the per-agent lifecycle testable with node --test.
 export interface PlanPillClient {
   addComposerPill(contribution: PluginComposerPillContribution): PluginButtonRegistration;
-  paseo: Pick<PaseoApi, "agents">;
+  paseo: Pick<PluginClientContext["paseo"], "agents">;
 }
+
+type PaseoAgent = Awaited<ReturnType<PluginClientContext["paseo"]["agents"]["list"]>>["entries"][number]["agent"];
 
 const PILL_ID = "plan";
 const PILL_TITLE = "Plan de Claude";
