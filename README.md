@@ -4,6 +4,8 @@ A Paseo plugin that shows Claude's task list at the end of the conversation, lik
 what each task actually did: tap a task to open the commands it ran, tap a command to see its output.
 
 - The task in progress is open by default and shows the live commands; the others stay closed.
+- The same list opens from a `Plan` pill next to the composer (per Claude agent, with its progress `x/y`): the popover
+  shows the full list without scrolling the conversation.
 - Commands run while no task is in progress go under "Otros comandos".
 - It replaces Paseo's own task rows and tool-call rows, so nothing is shown twice. Only Claude agents feed the card:
   with another provider you would lose the tool-call rows.

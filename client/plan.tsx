@@ -1,13 +1,14 @@
-import type { PluginTimelineItemProps } from "@getpaseo/plugin/client";
-import { useState } from "react";
+import type { PluginButtonContentProps, PluginTimelineItemProps } from "@getpaseo/plugin/client";
+import { usePaseo } from "@getpaseo/plugin/client";
+import { useEffect, useState } from "react";
 import { Pressable, ScrollView, Text, View } from "react-native";
-import type { PlanData } from "../shared/plan.ts";
+import { planFromTimelineItem, type PlanData } from "../shared/plan.ts";
 
 const marker = { completed: "✓", in_progress: "◐", pending: "○", other: "·" } as const;
 const mono = { fontFamily: "monospace", lineHeight: 18 } as const;
 
-// Flat rows, no box: the same look as Paseo's own timeline rows.
-export function Plan({ item, theme }: PluginTimelineItemProps<PlanData>) {
+// Flat rows, no box: the same look as Paseo's own timeline rows. Shared by the timeline card and the composer popover.
+function PlanView({ data, theme }: { data: PlanData; theme: PluginTimelineItemProps["theme"] }) {
   const c = theme.colors;
   // Undefined = never touched: the task in progress is open, the rest closed.
   const [toggled, setToggled] = useState<Record<string, boolean>>({});
@@ -15,7 +16,7 @@ export function Plan({ item, theme }: PluginTimelineItemProps<PlanData>) {
   const rule = { borderLeftWidth: 1, borderLeftColor: c.border };
   return (
     <View style={{ marginVertical: 6 }}>
-      {item.data.tasks.map((t) => {
+      {data.tasks.map((t) => {
         const color = t.status === "completed" ? c.statusSuccess : t.status === "in_progress" ? c.accent : c.foregroundMuted;
         const active = t.status === "in_progress";
         const open = toggled[t.key] ?? active;
@@ -71,6 +72,64 @@ export function Plan({ item, theme }: PluginTimelineItemProps<PlanData>) {
           </View>
         );
       })}
+    </View>
+  );
+}
+
+export function Plan({ item, theme }: PluginTimelineItemProps<PlanData>) {
+  return <PlanView data={item.data} theme={theme} />;
+}
+
+// The same list at the composer: bootstrap from the last page of the timeline (the server's row survives the turn) and
+// follow live events; a replaced epoch or a restored subscription refetches, since live events alone no longer tell all.
+export function PlanPopover(props: PluginButtonContentProps) {
+  const paseo = usePaseo();
+  const { theme } = props;
+  // A composer pill is always registered in agent context; the type allows the workspace variant too.
+  const agentId = props.context === "agent" ? props.agentId : undefined;
+  const [data, setData] = useState<PlanData | null>(null);
+  useEffect(() => {
+    if (!agentId) return;
+    let alive = true;
+    // same race as the pill's label: a page fetched while live rows were landing is older than what is on screen
+    let tick = 0;
+    let boot = 0;
+    const handle = paseo.agents.ref(agentId);
+    const apply = (item: unknown) => {
+      const d = planFromTimelineItem(item);
+      if (d && alive) {
+        tick++;
+        setData(d);
+      }
+    };
+    const bootstrap = async () => {
+      const id = ++boot;
+      const seen = tick;
+      const page = await handle.timeline.refetch({ direction: "before", limit: 50, projection: "projected" }).catch(() => null);
+      if (!page || !alive || id !== boot || tick !== seen) return; // superseded by a newer bootstrap or a live row
+      for (const row of page.entries) apply(row.item);
+    };
+    const sub = handle.timeline.subscribe((e) => {
+      if (e.event.type === "timeline") apply(e.event.item);
+      else if (e.event.type === "replacement" || e.event.type === "subscription_restored") void bootstrap();
+    });
+    sub.ready.catch(() => {}); // establishment failure leaves the popover on the bootstrapped page
+    void bootstrap();
+    return () => {
+      alive = false;
+      void sub.release().catch(() => {});
+    };
+  }, [paseo, agentId]);
+  if (!data) {
+    return (
+      <View style={{ padding: 12 }}>
+        <Text style={{ color: theme.colors.foregroundMuted, fontSize: 13 }}>Sin plan todavía.</Text>
+      </View>
+    );
+  }
+  return (
+    <View style={{ paddingHorizontal: 10, paddingVertical: 4, minWidth: 280, maxWidth: 420 }}>
+      <PlanView data={data} theme={theme} />
     </View>
   );
 }
