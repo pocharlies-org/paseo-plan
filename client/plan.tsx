@@ -110,7 +110,7 @@ function LivePlan({ agentId, theme }: { agentId: string | undefined; theme: Plug
       const id = ++boot;
       const seen = tick;
       const sessionId = await session;
-      const plan = sessionId ? await getPlan({ sessionId }).then((r) => r.plan, () => null) : null;
+      const plan = sessionId ? await getPlan({ sessionIds: [sessionId] }).then((r) => r.plans[sessionId] ?? null, () => null) : null;
       // else superseded by a newer read or a live row
       if (plan && alive && id === boot && tick === seen) setData((shown) => keepCommands(plan, shown));
     };

@@ -13,7 +13,9 @@ interface Live {
 export default function contribute(server: PluginServerContext) {
   const live = new Map<string, Live>();
 
-  server.handle(planGet, async ({ sessionId }) => ({ plan: await planFromTasks(sessionId) }));
+  server.handle(planGet, async ({ sessionIds }) => ({
+    plans: Object.fromEntries(await Promise.all(sessionIds.map(async (id) => [id, await planFromTasks(id)] as const))),
+  }));
 
   const stop = async (agentId: string) => {
     const l = live.get(agentId);

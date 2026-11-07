@@ -37,7 +37,7 @@ interface Live {
 /**
  * One composer pill per Claude agent, opening the plan in a popover. Pills follow the agent directory (bootstrap
  * from the list snapshot, then upsert/remove deltas); each one bootstraps its label from the task files on the daemon
- * host (plan.get) and keeps it current through the typed timeline subscription. The returned cleanup detaches
+ * host (plan.get, batched) and keeps it current through the typed timeline subscription. The returned cleanup detaches
  * everything, including a list that resolves late, after the plugin was already unloaded.
  */
 export function registerPlanPills(client: PlanPillClient, Content: ComponentType<PluginButtonContentProps>): () => void {
@@ -46,6 +46,25 @@ export function registerPlanPills(client: PlanPillClient, Content: ComponentType
   let stopped = false;
   let stopAgents: (() => void) | undefined;
   let agentsSub: { release(): Promise<void> } | undefined;
+
+  // The pills' reads go out as one plan.get per tick: the directory snapshot upserts every agent in one go.
+  type Waiters = Map<string, Array<(plan: PlanData | null) => void>>;
+  let batch: Waiters | undefined;
+  const read = (sessionId: string) =>
+    new Promise<PlanData | null>((resolve) => {
+      if (!batch) {
+        const mine: Waiters = new Map();
+        batch = mine;
+        queueMicrotask(() => {
+          batch = undefined;
+          void client.rpc(planGet, { sessionIds: [...mine.keys()] }).then(
+            ({ plans }) => mine.forEach((waiters, id) => waiters.forEach((w) => w(plans[id] ?? null))),
+            () => mine.forEach((waiters) => waiters.forEach((w) => w(null))),
+          );
+        });
+      }
+      batch.set(sessionId, [...(batch.get(sessionId) ?? []), resolve]);
+    });
 
   const apply = (agentId: string, item: unknown) => {
     const data = planFromTimelineItem(item);
@@ -100,7 +119,7 @@ export function registerPlanPills(client: PlanPillClient, Content: ComponentType
       const sessionId = entry.sessionId;
       if (!sessionId) return; // a session not started yet has no task files
       const tick = entry.tick;
-      const plan = await client.rpc(planGet, { sessionId }).then((r) => r.plan, (): PlanData | null => null);
+      const plan = await read(sessionId);
       // dropped, re-registered, or a live row landed while reading: the files are older than what the pill shows
       if (!plan || live.get(agent.id) !== entry || entry.tick !== tick) return;
       entry.reg.update({ label: planProgressLabel(plan) });
