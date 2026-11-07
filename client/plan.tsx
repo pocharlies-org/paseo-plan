@@ -101,10 +101,16 @@ function LivePlan({ agentId, theme }: { agentId: string | undefined; theme: Plug
         setData(d);
       }
     };
+    // the session id comes with the agent's snapshot; one refresh per open popover or panel
+    const session = handle.refresh().then(() => {
+      const current = handle.current();
+      return current?.persistence?.sessionId ?? current?.runtimeInfo?.sessionId ?? null;
+    }, () => null);
     const bootstrap = async () => {
       const id = ++boot;
       const seen = tick;
-      const plan = await getPlan({ agentId }).then((r) => r.plan, () => null);
+      const sessionId = await session;
+      const plan = sessionId ? await getPlan({ sessionId }).then((r) => r.plan, () => null) : null;
       if (plan && alive && id === boot && tick === seen) setData(plan); // else superseded by a newer read or a live row
     };
     const sub = handle.timeline.subscribe((e) => {

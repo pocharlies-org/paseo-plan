@@ -15,6 +15,7 @@ const agent = (id: string, extra: Record<string, unknown> = {}) => ({
   provider: "claude",
   workspaceId: "w1",
   status: "running",
+  persistence: { provider: "claude", sessionId: `s-${id}` },
   ...extra,
 });
 
@@ -31,6 +32,7 @@ interface Timeline {
 
 function harness(opts: { holdList?: boolean; holdRead?: boolean } = {}) {
   const pills: Pill[] = [];
+  const reads: string[] = [];
   const timelines = new Map<string, Timeline>();
   let observers: Array<{ snapshot(s: { entries: unknown[] }): void; update(m: unknown): void }> = [];
   let agentsReleased = false;
@@ -52,9 +54,10 @@ function harness(opts: { holdList?: boolean; holdRead?: boolean } = {}) {
   };
   const fake = {
     // plan.get answers from the agent's task files; here, the last plan the fake timeline holds
-    async rpc(_contract: unknown, input: { agentId: string }) {
+    async rpc(_contract: unknown, input: { sessionId: string }) {
+      reads.push(input.sessionId);
       await readGate;
-      const last = timelineFor(input.agentId).rows.at(-1) as { data?: unknown } | undefined;
+      const last = timelineFor(input.sessionId.slice(2)).rows.at(-1) as { data?: unknown } | undefined;
       return { plan: last?.data ?? null };
     },
     addComposerPill(contrib: Pill["contrib"] & Record<string, unknown>) {
@@ -121,6 +124,7 @@ function harness(opts: { holdList?: boolean; holdRead?: boolean } = {}) {
   };
   return {
     client: fake as unknown as PlanPillClient,
+    reads,
     pills,
     timelines,
     timelineFor,
@@ -175,6 +179,16 @@ test("labels bootstrap from the task files and update per agent, never across ag
   h.emit("a1", { type: "timeline", item: { type: "tool_call", callId: "x", name: "Bash" } }); // not our row: no change
   assert.equal(label(pillFor(h, "a1")!), "Plan 2/3");
   assert.equal(label(pillFor(h, "a2")!), "Plan 0/2");
+});
+
+test("the files are read by the agent's Claude session id; an agent without one is not asked", async () => {
+  const h = harness();
+  registerPlanPills(h.client, Content);
+  await h.flush();
+  h.snapshot([agent("a1"), agent("a2", { persistence: null })]);
+  await h.flush();
+  assert.deepEqual(h.reads, ["s-a1"]);
+  assert.equal(label(pillFor(h, "a2")!), "Plan");
 });
 
 test("a restored or replaced epoch rereads the task files", async () => {
