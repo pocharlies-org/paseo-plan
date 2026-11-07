@@ -7,7 +7,7 @@ import { planFromTimelineItem, planGet, type PlanData } from "../shared/plan.ts"
 const marker = { completed: "✓", in_progress: "◐", pending: "○", other: "·" } as const;
 const mono = { fontFamily: "monospace", lineHeight: 18 } as const;
 
-// Flat rows, no box: the same look as Paseo's own timeline rows. Shared by the timeline card and the composer popover.
+// Flat rows, no box: the same look as Paseo's own timeline rows. Shared by the timeline card, the popover and the panel.
 function PlanView({ data, theme }: { data: PlanData; theme: PluginTimelineItemProps["theme"] }) {
   const c = theme.colors;
   // Undefined = never touched: the task in progress is open, the rest closed.
@@ -144,18 +144,18 @@ export const planPopover = (openPanel: OpenPanel) =>
     const agentId = props.context === "agent" ? props.agentId : undefined;
     return (
       <View style={{ paddingHorizontal: 10, paddingVertical: 4, minWidth: 280, maxWidth: 420 }}>
-        <LivePlan agentId={agentId} theme={theme} />
         {agentId ? (
           <Pressable
             onPress={() => {
               openPanel(PANEL_ID, { workspaceId: props.workspaceId, agentId, location: "explorer" });
               close();
             }}
-            style={{ paddingVertical: 8, borderTopWidth: 1, borderTopColor: theme.colors.border }}
+            style={{ paddingVertical: 8, borderBottomWidth: 1, borderBottomColor: theme.colors.border }}
           >
             <Text style={{ color: theme.colors.accent, fontSize: 13 }}>Ver en la barra lateral</Text>
           </Pressable>
         ) : null}
+        <LivePlan agentId={agentId} theme={theme} />
       </View>
     );
   };

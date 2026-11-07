@@ -27,7 +27,7 @@ interface Live {
   reg: PluginButtonRegistration;
   workspaceId: string;
   release: () => Promise<void>;
-  // live plan rows applied: a bootstrap whose refetch races one is stale and must not overwrite the label
+  // live plan rows applied: a bootstrap whose read races one is stale and must not overwrite the label
   tick: number;
 }
 
