@@ -49,6 +49,15 @@ export const planFromTimelineItem = (item: unknown): PlanData | null => {
   return parsed.success ? parsed.data : null;
 };
 
+// The task files carry no commands: a reread (e.g. after a reconnect) keeps the ones the live rows already showed,
+// matched by task text, and their "other commands" entry.
+export const keepCommands = (files: PlanData, live: PlanData | null): PlanData => {
+  if (!live) return files;
+  const byText = new Map(live.tasks.filter((t) => t.status !== "other").map((t) => [t.text, t.commands]));
+  const other = live.tasks.filter((t) => t.status === "other");
+  return { tasks: [...other, ...files.tasks.map((t) => ({ ...t, commands: byText.get(t.text) ?? t.commands }))] };
+};
+
 // Short progress for the pill's label; the popover carries the full list.
 export const planProgressLabel = (data: PlanData): string => {
   const tasks = data.tasks.filter((t) => t.status !== "other");

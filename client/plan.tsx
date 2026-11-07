@@ -2,7 +2,7 @@ import type { PluginAgentPanelProps, PluginButtonContentProps, PluginClientConte
 import { usePaseo, useRpc } from "@getpaseo/plugin/client";
 import { useEffect, useState } from "react";
 import { Pressable, ScrollView, Text, View } from "react-native";
-import { planFromTimelineItem, planGet, type PlanData } from "../shared/plan.ts";
+import { keepCommands, planFromTimelineItem, planGet, type PlanData } from "../shared/plan.ts";
 
 const marker = { completed: "✓", in_progress: "◐", pending: "○", other: "·" } as const;
 const mono = { fontFamily: "monospace", lineHeight: 18 } as const;
@@ -111,7 +111,8 @@ function LivePlan({ agentId, theme }: { agentId: string | undefined; theme: Plug
       const seen = tick;
       const sessionId = await session;
       const plan = sessionId ? await getPlan({ sessionId }).then((r) => r.plan, () => null) : null;
-      if (plan && alive && id === boot && tick === seen) setData(plan); // else superseded by a newer read or a live row
+      // else superseded by a newer read or a live row
+      if (plan && alive && id === boot && tick === seen) setData((shown) => keepCommands(plan, shown));
     };
     const sub = handle.timeline.subscribe((e) => {
       if (e.event.type === "timeline") apply(e.event.item);

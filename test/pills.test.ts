@@ -191,6 +191,20 @@ test("the files are read by the agent's Claude session id; an agent without one 
   assert.equal(label(pillFor(h, "a2")!), "Plan");
 });
 
+test("a pill made before its agent had a session reads the files once the session id arrives", async () => {
+  const h = harness();
+  h.timelineFor("a1").rows = [planRow(["completed", "pending"])];
+  registerPlanPills(h.client, Content);
+  await h.flush();
+  h.snapshot([agent("a1", { persistence: null })]);
+  await h.flush();
+  assert.equal(label(pillFor(h, "a1")!), "Plan");
+  h.update({ type: "agent_update", payload: { kind: "upsert", agent: agent("a1") } });
+  await h.flush();
+  assert.equal(label(pillFor(h, "a1")!), "Plan 1/2");
+  assert.deepEqual(h.reads, ["s-a1"]);
+});
+
 test("a restored or replaced epoch rereads the task files", async () => {
   const h = harness();
   h.timelineFor("a1").rows = [planRow(["pending"])];
