@@ -29,7 +29,7 @@ interface Timeline {
   released: boolean;
 }
 
-function harness(opts: { holdList?: boolean; holdRefetch?: boolean } = {}) {
+function harness(opts: { holdList?: boolean; holdRead?: boolean } = {}) {
   const pills: Pill[] = [];
   const timelines = new Map<string, Timeline>();
   let observers: Array<{ snapshot(s: { entries: unknown[] }): void; update(m: unknown): void }> = [];
@@ -39,11 +39,11 @@ function harness(opts: { holdList?: boolean; holdRefetch?: boolean } = {}) {
   const listGate = new Promise<void>((resolve) => {
     resolveList = resolve;
   });
-  let refetchGate: Promise<void> = Promise.resolve();
-  let resolveRefetch: () => void = () => {};
-  if (opts.holdRefetch) {
-    refetchGate = new Promise<void>((resolve) => {
-      resolveRefetch = resolve;
+  let readGate: Promise<void> = Promise.resolve();
+  let resolveRead: () => void = () => {};
+  if (opts.holdRead) {
+    readGate = new Promise<void>((resolve) => {
+      resolveRead = resolve;
     });
   }
   const timelineFor = (id: string) => {
@@ -51,6 +51,12 @@ function harness(opts: { holdList?: boolean; holdRefetch?: boolean } = {}) {
     return timelines.get(id)!;
   };
   const fake = {
+    // plan.get answers from the agent's task files; here, the last plan the fake timeline holds
+    async rpc(_contract: unknown, input: { agentId: string }) {
+      await readGate;
+      const last = timelineFor(input.agentId).rows.at(-1) as { data?: unknown } | undefined;
+      return { plan: last?.data ?? null };
+    },
     addComposerPill(contrib: Pill["contrib"] & Record<string, unknown>) {
       const pill: Pill = { contrib, updates: [], removed: false };
       pills.push(pill);
@@ -104,10 +110,6 @@ function harness(opts: { holdList?: boolean; holdRefetch?: boolean } = {}) {
                   },
                 };
               },
-              async refetch() {
-                await refetchGate;
-                return { entries: t.rows.map((item) => ({ item })), pageInfo: {} };
-              },
             },
           };
         },
@@ -124,7 +126,7 @@ function harness(opts: { holdList?: boolean; holdRefetch?: boolean } = {}) {
     timelineFor,
     flush,
     releaseList: () => resolveList(),
-    releaseRefetch: () => resolveRefetch(),
+    releaseRead: () => resolveRead(),
     observed: () => observers.length,
     snapshot: (agents: unknown[]) => {
       // directory entries carry { agent, project }, like FetchAgentsEntry
@@ -159,7 +161,7 @@ test("one pill per Claude agent; other providers, closed agents and workspace-le
   assert.equal(label(pillFor(h, "a1")!), "Plan");
 });
 
-test("labels bootstrap from the timeline page and update per agent, never across agents", async () => {
+test("labels bootstrap from the task files and update per agent, never across agents", async () => {
   const h = harness();
   h.timelineFor("a1").rows = [planRow(["completed", "pending", "pending"])];
   h.timelineFor("a2").rows = [planRow(["pending", "pending"])];
@@ -175,7 +177,7 @@ test("labels bootstrap from the timeline page and update per agent, never across
   assert.equal(label(pillFor(h, "a2")!), "Plan 0/2");
 });
 
-test("a restored or replaced epoch refetches the page", async () => {
+test("a restored or replaced epoch rereads the task files", async () => {
   const h = harness();
   h.timelineFor("a1").rows = [planRow(["pending"])];
   registerPlanPills(h.client, Content);
@@ -229,18 +231,18 @@ test("an agent that changed workspace re-registers its pill under the new worksp
 });
 
 test("a slow bootstrap does not overwrite a newer live label", async () => {
-  const h = harness({ holdRefetch: true });
+  const h = harness({ holdRead: true });
   h.timelineFor("a1").rows = [planRow(["pending"])];
   registerPlanPills(h.client, Content);
   await h.flush();
   h.snapshot([agent("a1")]);
-  await h.flush(); // the bootstrap's refetch is still in flight
+  await h.flush(); // the bootstrap's read is still in flight
   h.emit("a1", { type: "timeline", item: planRow(["completed"]) });
   const pill = pillFor(h, "a1")!;
   assert.deepEqual(pill.updates, [{ label: "Plan 1/1" }]);
-  h.releaseRefetch();
+  h.releaseRead();
   await h.flush();
-  assert.deepEqual(pill.updates, [{ label: "Plan 1/1" }]); // the stale page was discarded, not applied
+  assert.deepEqual(pill.updates, [{ label: "Plan 1/1" }]); // the stale read was discarded, not applied
 });
 
 test("remove and cleanup isolate per agent and release every subscription", async () => {

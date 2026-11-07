@@ -5,12 +5,13 @@ import type {
   PluginClientContext,
 } from "@getpaseo/plugin/client";
 import type { ComponentType } from "react";
-import { planFromTimelineItem, planProgressLabel } from "../shared/plan.ts";
+import { planFromTimelineItem, planGet, planProgressLabel, type PlanData } from "../shared/plan.ts";
 
 // The slice of the host this module uses, typed against the real API: index.client.tsx hands in the plugin context,
 // the tests hand in a fake. Keeping it free of React makes the per-agent lifecycle testable with node --test.
 export interface PlanPillClient {
   addComposerPill(contribution: PluginComposerPillContribution): PluginButtonRegistration;
+  rpc: PluginClientContext["rpc"];
   paseo: Pick<PluginClientContext["paseo"], "agents">;
 }
 
@@ -32,9 +33,9 @@ interface Live {
 
 /**
  * One composer pill per Claude agent, opening the plan in a popover. Pills follow the agent directory (bootstrap
- * from the list snapshot, then upsert/remove deltas); each one bootstraps its label from the timeline's last page and
- * keeps it current through the typed timeline subscription. The returned cleanup detaches everything, including a
- * list that resolves late, after the plugin was already unloaded.
+ * from the list snapshot, then upsert/remove deltas); each one bootstraps its label from the task files on the daemon
+ * host (plan.get) and keeps it current through the typed timeline subscription. The returned cleanup detaches
+ * everything, including a list that resolves late, after the plugin was already unloaded.
  */
 export function registerPlanPills(client: PlanPillClient, Content: ComponentType<PluginButtonContentProps>): () => void {
   const live = new Map<string, Live>();
@@ -79,7 +80,7 @@ export function registerPlanPills(client: PlanPillClient, Content: ComponentType
     const sub = handle.timeline.subscribe((e) => {
       if (live.get(agent.id) !== entry) return; // dropped while an event was in flight
       if (e.event.type === "timeline") apply(agent.id, e.event.item);
-      // A new epoch or a restored subscription: live events alone no longer tell the whole story, refetch.
+      // A new epoch or a restored subscription: live events alone no longer tell the whole story, reread.
       else if (e.event.type === "replacement" || e.event.type === "subscription_restored") void bootstrap();
     });
     sub.ready.catch(() => {}); // establishment failure leaves the pill on the bootstrapped label
@@ -87,12 +88,10 @@ export function registerPlanPills(client: PlanPillClient, Content: ComponentType
     live.set(agent.id, entry);
     async function bootstrap() {
       const tick = entry.tick;
-      const page = await handle
-        .timeline.refetch({ direction: "before", limit: 50, projection: "projected" })
-        .catch(() => null);
-      // dropped, re-registered, or a live row landed while fetching: this page is older than what the pill shows
-      if (!page || live.get(agent.id) !== entry || entry.tick !== tick) return;
-      for (const row of page.entries) apply(agent.id, row.item); // last plan row on the page wins
+      const plan = await client.rpc(planGet, { agentId: agent.id }).then((r) => r.plan, (): PlanData | null => null);
+      // dropped, re-registered, or a live row landed while reading: the files are older than what the pill shows
+      if (!plan || live.get(agent.id) !== entry || entry.tick !== tick) return;
+      entry.reg.update({ label: planProgressLabel(plan) });
     }
     void bootstrap();
   };

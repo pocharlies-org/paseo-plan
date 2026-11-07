@@ -1,7 +1,7 @@
 {
   "id": "paseo-plan",
   "name": "Plan de Claude",
-  "description": "Shows Claude's task list at the end of the conversation with the commands each task runs, like Claude Desktop's plan box.",
+  "description": "Shows Claude's task list at the end of the conversation with the commands each task runs, like Claude Desktop's plan box, also from a composer pill and a panel of the right sidebar.",
   "requirements": {
     "paseo": ">=0.11.2"
   }
