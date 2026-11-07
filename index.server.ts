@@ -13,13 +13,7 @@ interface Live {
 export default function contribute(server: PluginServerContext) {
   const live = new Map<string, Live>();
 
-  server.handle(planGet, async ({ agentId }, { paseo }) => {
-    const agent = paseo.agents.ref(agentId);
-    await agent.refresh();
-    const current = agent.current();
-    const sessionId = current?.persistence?.sessionId ?? current?.runtimeInfo?.sessionId;
-    return { plan: sessionId ? await planFromTasks(sessionId) : null };
-  });
+  server.handle(planGet, async ({ sessionId }) => ({ plan: await planFromTasks(sessionId) }));
 
   const stop = async (agentId: string) => {
     const l = live.get(agentId);

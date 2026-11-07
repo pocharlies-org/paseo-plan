@@ -27,7 +27,7 @@ interface Live {
   reg: PluginButtonRegistration;
   workspaceId: string;
   release: () => Promise<void>;
-  // live plan rows applied: a bootstrap whose refetch races one is stale and must not overwrite the label
+  // live plan rows applied: a bootstrap whose read races one is stale and must not overwrite the label
   tick: number;
 }
 
@@ -86,9 +86,11 @@ export function registerPlanPills(client: PlanPillClient, Content: ComponentType
     sub.ready.catch(() => {}); // establishment failure leaves the pill on the bootstrapped label
     entry.release = () => sub.release();
     live.set(agent.id, entry);
+    const sessionId = agent.persistence?.sessionId ?? agent.runtimeInfo?.sessionId;
     async function bootstrap() {
+      if (!sessionId) return; // a session not started yet has no task files
       const tick = entry.tick;
-      const plan = await client.rpc(planGet, { agentId: agent.id }).then((r) => r.plan, (): PlanData | null => null);
+      const plan = await client.rpc(planGet, { sessionId }).then((r) => r.plan, (): PlanData | null => null);
       // dropped, re-registered, or a live row landed while reading: the files are older than what the pill shows
       if (!plan || live.get(agent.id) !== entry || entry.tick !== tick) return;
       entry.reg.update({ label: planProgressLabel(plan) });

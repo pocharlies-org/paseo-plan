@@ -1,4 +1,4 @@
-import type { PluginAgentPanelProps, PluginButtonContentProps, PluginTimelineItemProps } from "@getpaseo/plugin/client";
+import type { PluginAgentPanelProps, PluginButtonContentProps, PluginClientContext, PluginTimelineItemProps } from "@getpaseo/plugin/client";
 import { usePaseo, useRpc } from "@getpaseo/plugin/client";
 import { useEffect, useState } from "react";
 import { Pressable, ScrollView, Text, View } from "react-native";
@@ -7,7 +7,7 @@ import { planFromTimelineItem, planGet, type PlanData } from "../shared/plan.ts"
 const marker = { completed: "✓", in_progress: "◐", pending: "○", other: "·" } as const;
 const mono = { fontFamily: "monospace", lineHeight: 18 } as const;
 
-// Flat rows, no box: the same look as Paseo's own timeline rows. Shared by the timeline card and the composer popover.
+// Flat rows, no box: the same look as Paseo's own timeline rows. Shared by the timeline card, the popover and the panel.
 function PlanView({ data, theme }: { data: PlanData; theme: PluginTimelineItemProps["theme"] }) {
   const c = theme.colors;
   // Undefined = never touched: the task in progress is open, the rest closed.
@@ -101,10 +101,16 @@ function LivePlan({ agentId, theme }: { agentId: string | undefined; theme: Plug
         setData(d);
       }
     };
+    // the session id comes with the agent's snapshot; one refresh per open popover or panel
+    const session = handle.refresh().then(() => {
+      const current = handle.current();
+      return current?.persistence?.sessionId ?? current?.runtimeInfo?.sessionId ?? null;
+    }, () => null);
     const bootstrap = async () => {
       const id = ++boot;
       const seen = tick;
-      const plan = await getPlan({ agentId }).then((r) => r.plan, () => null);
+      const sessionId = await session;
+      const plan = sessionId ? await getPlan({ sessionId }).then((r) => r.plan, () => null) : null;
       if (plan && alive && id === boot && tick === seen) setData(plan); // else superseded by a newer read or a live row
     };
     const sub = handle.timeline.subscribe((e) => {
@@ -128,17 +134,36 @@ function LivePlan({ agentId, theme }: { agentId: string | undefined; theme: Plug
   return <PlanView data={data} theme={theme} />;
 }
 
-export function PlanPopover({ theme, ...props }: PluginButtonContentProps) {
-  // A composer pill is always registered in agent context; the type allows the workspace variant too.
-  const agentId = props.context === "agent" ? props.agentId : undefined;
-  return (
-    <View style={{ paddingHorizontal: 10, paddingVertical: 4, minWidth: 280, maxWidth: 420 }}>
-      <LivePlan agentId={agentId} theme={theme} />
-    </View>
-  );
-}
+// The host lists agent panels in no menu (0.15.1): the popover is the way into the side panel.
+export const PANEL_ID = "plan";
+type OpenPanel = PluginClientContext["openPanel"];
 
-export function PlanPanel({ agentId, theme }: PluginAgentPanelProps) {
+export const planPopover = (openPanel: OpenPanel) =>
+  function PlanPopover({ theme, close, ...props }: PluginButtonContentProps) {
+    // A composer pill is always registered in agent context; the type allows the workspace variant too.
+    const agentId = props.context === "agent" ? props.agentId : undefined;
+    return (
+      <View style={{ paddingHorizontal: 10, paddingVertical: 4, minWidth: 280, maxWidth: 420 }}>
+        {agentId ? (
+          <Pressable
+            onPress={() => {
+              openPanel(PANEL_ID, { workspaceId: props.workspaceId, agentId, location: "explorer" });
+              close();
+            }}
+            style={{ paddingVertical: 8, borderBottomWidth: 1, borderBottomColor: theme.colors.border }}
+          >
+            <Text style={{ color: theme.colors.accent, fontSize: 13 }}>Ver en la barra lateral</Text>
+          </Pressable>
+        ) : null}
+        <LivePlan agentId={agentId} theme={theme} />
+      </View>
+    );
+  };
+
+export function PlanPanel(props: PluginAgentPanelProps) {
+  // 0.15 hands the agent in params and keeps agentId as deprecated; 0.11 only has agentId.
+  const agentId = (props as { params?: { agentId?: string } }).params?.agentId ?? props.agentId;
+  const { theme } = props;
   return (
     <ScrollView contentContainerStyle={{ paddingHorizontal: 12, paddingVertical: 4 }}>
       <LivePlan agentId={agentId} theme={theme} />

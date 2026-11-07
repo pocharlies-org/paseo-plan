@@ -25,9 +25,11 @@ export type PlanData = z.output<typeof planSchema>;
 
 // The plan as Claude Code keeps it on the daemon host (~/.claude/tasks/<session id>), for whatever opens without the
 // live rows: the pill after a reload, the popover, the side panel. The live plan-progress rows then add the commands.
+// Keyed by the Claude session id the client already holds: a pill per agent asks at once, and resolving each agent on
+// the daemon (agents.refresh) left those calls unanswered.
 export const planGet = defineRpc({
   name: "plan.get",
-  input: z.object({ agentId: z.string().min(1) }).strict(),
+  input: z.object({ sessionId: z.string().min(1) }).strict(),
   output: z.object({ plan: planSchema.nullable() }),
 });
 
