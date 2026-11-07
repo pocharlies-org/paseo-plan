@@ -18,6 +18,10 @@ export interface PlanPillClient {
 type PaseoAgent = Awaited<ReturnType<PluginClientContext["paseo"]["agents"]["list"]>>["entries"][number]["agent"];
 
 const PILL_ID = "plan";
+
+// agent id → Claude session id, as the pills learn it from the directory: the popover and the panel read the files
+// right away instead of one agent refresh first, which waits seconds behind other plugins' traffic.
+export const knownSessions = new Map<string, string>();
 const PILL_TITLE = "Plan de Claude";
 
 // Same provider gate as the server half: without the plan rows there is nothing for the pill to show.
@@ -29,12 +33,15 @@ interface Live {
   release: () => Promise<void>;
   // live plan rows applied: a bootstrap whose read races one is stale and must not overwrite the label
   tick: number;
+  // the agent's Claude session id, which may arrive in a later directory update than the pill itself
+  sessionId?: string;
+  bootstrap: () => Promise<void>;
 }
 
 /**
  * One composer pill per Claude agent, opening the plan in a popover. Pills follow the agent directory (bootstrap
  * from the list snapshot, then upsert/remove deltas); each one bootstraps its label from the task files on the daemon
- * host (plan.get) and keeps it current through the typed timeline subscription. The returned cleanup detaches
+ * host (plan.get, batched) and keeps it current through the typed timeline subscription. The returned cleanup detaches
  * everything, including a list that resolves late, after the plugin was already unloaded.
  */
 export function registerPlanPills(client: PlanPillClient, Content: ComponentType<PluginButtonContentProps>): () => void {
@@ -43,6 +50,25 @@ export function registerPlanPills(client: PlanPillClient, Content: ComponentType
   let stopped = false;
   let stopAgents: (() => void) | undefined;
   let agentsSub: { release(): Promise<void> } | undefined;
+
+  // The pills' reads go out as one plan.get per tick: the directory snapshot upserts every agent in one go.
+  type Waiters = Map<string, Array<(plan: PlanData | null) => void>>;
+  let batch: Waiters | undefined;
+  const read = (sessionId: string) =>
+    new Promise<PlanData | null>((resolve) => {
+      if (!batch) {
+        const mine: Waiters = new Map();
+        batch = mine;
+        queueMicrotask(() => {
+          batch = undefined;
+          void client.rpc(planGet, { sessionIds: [...mine.keys()] }).then(
+            ({ plans }) => mine.forEach((waiters, id) => waiters.forEach((w) => w(plans[id] ?? null))),
+            () => mine.forEach((waiters) => waiters.forEach((w) => w(null))),
+          );
+        });
+      }
+      batch.set(sessionId, [...(batch.get(sessionId) ?? []), resolve]);
+    });
 
   const apply = (agentId: string, item: unknown) => {
     const data = planFromTimelineItem(item);
@@ -57,6 +83,7 @@ export function registerPlanPills(client: PlanPillClient, Content: ComponentType
     const l = live.get(agentId);
     if (!l) return;
     live.delete(agentId);
+    knownSessions.delete(agentId);
     l.reg.remove();
     // Releasing a subscription that never established rejects: expected, the pill is gone either way.
     void l.release().catch(() => {});
@@ -64,9 +91,17 @@ export function registerPlanPills(client: PlanPillClient, Content: ComponentType
 
   const upsert = (agent: PaseoAgent) => {
     if (stopped || !isClaude(agent) || agent.status === "closed" || !agent.workspaceId) return drop(agent.id);
+    const sessionId = agent.persistence?.sessionId ?? agent.runtimeInfo?.sessionId ?? undefined;
+    if (sessionId) knownSessions.set(agent.id, sessionId);
     const existing = live.get(agent.id);
     if (existing) {
-      if (existing.workspaceId === agent.workspaceId) return;
+      if (existing.workspaceId === agent.workspaceId) {
+        if (sessionId && sessionId !== existing.sessionId) {
+          existing.sessionId = sessionId;
+          void existing.bootstrap(); // the session started after the pill: now there are files to read
+        }
+        return;
+      }
       drop(agent.id); // moved to another workspace: the pill is registered under the old id and must be re-made
     }
     const reg = client.addComposerPill({
@@ -76,7 +111,7 @@ export function registerPlanPills(client: PlanPillClient, Content: ComponentType
       button: { title: PILL_TITLE, icon: "ListChecks", label: "Plan", behavior: { kind: "popover", Content } },
     });
     const handle = client.paseo.agents.ref(agent.id);
-    const entry: Live = { reg, workspaceId: agent.workspaceId, release: () => Promise.resolve(), tick: 0 };
+    const entry: Live = { reg, workspaceId: agent.workspaceId, release: () => Promise.resolve(), tick: 0, sessionId, bootstrap };
     const sub = handle.timeline.subscribe((e) => {
       if (live.get(agent.id) !== entry) return; // dropped while an event was in flight
       if (e.event.type === "timeline") apply(agent.id, e.event.item);
@@ -86,11 +121,11 @@ export function registerPlanPills(client: PlanPillClient, Content: ComponentType
     sub.ready.catch(() => {}); // establishment failure leaves the pill on the bootstrapped label
     entry.release = () => sub.release();
     live.set(agent.id, entry);
-    const sessionId = agent.persistence?.sessionId ?? agent.runtimeInfo?.sessionId;
     async function bootstrap() {
+      const sessionId = entry.sessionId;
       if (!sessionId) return; // a session not started yet has no task files
       const tick = entry.tick;
-      const plan = await client.rpc(planGet, { sessionId }).then((r) => r.plan, (): PlanData | null => null);
+      const plan = await read(sessionId);
       // dropped, re-registered, or a live row landed while reading: the files are older than what the pill shows
       if (!plan || live.get(agent.id) !== entry || entry.tick !== tick) return;
       entry.reg.update({ label: planProgressLabel(plan) });

@@ -42,3 +42,22 @@ test("a call another plugin draws as its own card stays out of the plan", () => 
   assert.equal(p.observe(call("s", "", "running", "mcp__rutador__start_session")), false);
   assert.deepEqual(p.data()!.tasks[0].commands, []);
 });
+
+test("a reread from the task files keeps the commands the live rows showed", async () => {
+  const { keepCommands } = await import("../shared/plan.ts");
+  const cmd = { label: "ls", status: "completed" as const };
+  const live = {
+    tasks: [
+      { key: "_other", text: "", status: "other" as const, commands: [cmd] },
+      { key: "a", text: "t1", status: "in_progress" as const, commands: [cmd] },
+    ],
+  };
+  const files = {
+    tasks: [
+      { key: "1", text: "t1", status: "completed" as const, commands: [] },
+      { key: "2", text: "t2", status: "pending" as const, commands: [] },
+    ],
+  };
+  assert.deepEqual(keepCommands(files, live).tasks.map((t) => [t.text, t.status, t.commands.length]), [["", "other", 1], ["t1", "completed", 1], ["t2", "pending", 0]]);
+  assert.equal(keepCommands(files, null), files);
+});

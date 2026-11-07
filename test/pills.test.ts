@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { registerPlanPills, type PlanPillClient } from "../client/pills.ts";
+import { knownSessions, registerPlanPills, type PlanPillClient } from "../client/pills.ts";
 
 const planRow = (statuses: Array<"pending" | "in_progress" | "completed">) => ({
   type: "plugin",
@@ -33,6 +33,7 @@ interface Timeline {
 function harness(opts: { holdList?: boolean; holdRead?: boolean } = {}) {
   const pills: Pill[] = [];
   const reads: string[] = [];
+  const calls: string[][] = [];
   const timelines = new Map<string, Timeline>();
   let observers: Array<{ snapshot(s: { entries: unknown[] }): void; update(m: unknown): void }> = [];
   let agentsReleased = false;
@@ -54,11 +55,12 @@ function harness(opts: { holdList?: boolean; holdRead?: boolean } = {}) {
   };
   const fake = {
     // plan.get answers from the agent's task files; here, the last plan the fake timeline holds
-    async rpc(_contract: unknown, input: { sessionId: string }) {
-      reads.push(input.sessionId);
+    async rpc(_contract: unknown, input: { sessionIds: string[] }) {
+      calls.push(input.sessionIds);
+      reads.push(...input.sessionIds);
       await readGate;
-      const last = timelineFor(input.sessionId.slice(2)).rows.at(-1) as { data?: unknown } | undefined;
-      return { plan: last?.data ?? null };
+      const last = (id: string) => (timelineFor(id.slice(2)).rows.at(-1) as { data?: unknown } | undefined)?.data ?? null;
+      return { plans: Object.fromEntries(input.sessionIds.map((id) => [id, last(id)])) };
     },
     addComposerPill(contrib: Pill["contrib"] & Record<string, unknown>) {
       const pill: Pill = { contrib, updates: [], removed: false };
@@ -125,6 +127,7 @@ function harness(opts: { holdList?: boolean; holdRead?: boolean } = {}) {
   return {
     client: fake as unknown as PlanPillClient,
     reads,
+    calls,
     pills,
     timelines,
     timelineFor,
@@ -165,7 +168,7 @@ test("one pill per Claude agent; other providers, closed agents and workspace-le
   assert.equal(label(pillFor(h, "a1")!), "Plan");
 });
 
-test("labels bootstrap from the task files and update per agent, never across agents", async () => {
+test("labels bootstrap from the task files in one call and update per agent, never across agents", async () => {
   const h = harness();
   h.timelineFor("a1").rows = [planRow(["completed", "pending", "pending"])];
   h.timelineFor("a2").rows = [planRow(["pending", "pending"])];
@@ -173,6 +176,7 @@ test("labels bootstrap from the task files and update per agent, never across ag
   await h.flush();
   h.snapshot([agent("a1"), agent("a2")]);
   await h.flush();
+  assert.deepEqual(h.calls, [["s-a1", "s-a2"]]); // one plan.get for the whole snapshot, not one per pill
   assert.equal(label(pillFor(h, "a1")!), "Plan 1/3");
   assert.equal(label(pillFor(h, "a2")!), "Plan 0/2");
   h.emit("a1", { type: "timeline", item: planRow(["completed", "completed", "pending"]) });
@@ -189,6 +193,23 @@ test("the files are read by the agent's Claude session id; an agent without one 
   await h.flush();
   assert.deepEqual(h.reads, ["s-a1"]);
   assert.equal(label(pillFor(h, "a2")!), "Plan");
+  assert.equal(knownSessions.get("a1"), "s-a1"); // handed to the popover and panel, so they skip the agent refresh
+  h.update({ type: "agent_update", payload: { kind: "remove", agentId: "a1" } });
+  assert.equal(knownSessions.has("a1"), false);
+});
+
+test("a pill made before its agent had a session reads the files once the session id arrives", async () => {
+  const h = harness();
+  h.timelineFor("a1").rows = [planRow(["completed", "pending"])];
+  registerPlanPills(h.client, Content);
+  await h.flush();
+  h.snapshot([agent("a1", { persistence: null })]);
+  await h.flush();
+  assert.equal(label(pillFor(h, "a1")!), "Plan");
+  h.update({ type: "agent_update", payload: { kind: "upsert", agent: agent("a1") } });
+  await h.flush();
+  assert.equal(label(pillFor(h, "a1")!), "Plan 1/2");
+  assert.deepEqual(h.reads, ["s-a1"]);
 });
 
 test("a restored or replaced epoch rereads the task files", async () => {

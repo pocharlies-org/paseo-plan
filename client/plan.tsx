@@ -2,7 +2,8 @@ import type { PluginAgentPanelProps, PluginButtonContentProps, PluginClientConte
 import { usePaseo, useRpc } from "@getpaseo/plugin/client";
 import { useEffect, useState } from "react";
 import { Pressable, ScrollView, Text, View } from "react-native";
-import { planFromTimelineItem, planGet, type PlanData } from "../shared/plan.ts";
+import { knownSessions } from "./pills.ts";
+import { keepCommands, planFromTimelineItem, planGet, type PlanData } from "../shared/plan.ts";
 
 const marker = { completed: "✓", in_progress: "◐", pending: "○", other: "·" } as const;
 const mono = { fontFamily: "monospace", lineHeight: 18 } as const;
@@ -86,7 +87,8 @@ export function Plan({ item, theme }: PluginTimelineItemProps<PlanData>) {
 function LivePlan({ agentId, theme }: { agentId: string | undefined; theme: PluginTimelineItemProps["theme"] }) {
   const paseo = usePaseo();
   const getPlan = useRpc(planGet);
-  const [data, setData] = useState<PlanData | null>(null);
+  // undefined while the first read is in flight: "no plan" only once the files said so
+  const [data, setData] = useState<PlanData | null | undefined>(undefined);
   useEffect(() => {
     if (!agentId) return;
     let alive = true;
@@ -101,8 +103,9 @@ function LivePlan({ agentId, theme }: { agentId: string | undefined; theme: Plug
         setData(d);
       }
     };
-    // the session id comes with the agent's snapshot; one refresh per open popover or panel
-    const session = handle.refresh().then(() => {
+    // the session id the pill already knows, else the agent's snapshot: one refresh per open popover or panel
+    const known = knownSessions.get(agentId);
+    const session = known ? Promise.resolve(known) : handle.refresh().then(() => {
       const current = handle.current();
       return current?.persistence?.sessionId ?? current?.runtimeInfo?.sessionId ?? null;
     }, () => null);
@@ -110,8 +113,10 @@ function LivePlan({ agentId, theme }: { agentId: string | undefined; theme: Plug
       const id = ++boot;
       const seen = tick;
       const sessionId = await session;
-      const plan = sessionId ? await getPlan({ sessionId }).then((r) => r.plan, () => null) : null;
-      if (plan && alive && id === boot && tick === seen) setData(plan); // else superseded by a newer read or a live row
+      const plan = sessionId ? await getPlan({ sessionIds: [sessionId] }).then((r) => r.plans[sessionId] ?? null, () => null) : null;
+      if (!alive || id !== boot) return; // superseded by a newer read
+      // a live row that landed while reading is newer than the files
+      setData((shown) => (plan && tick === seen ? keepCommands(plan, shown ?? null) : (shown ?? null)));
     };
     const sub = handle.timeline.subscribe((e) => {
       if (e.event.type === "timeline") apply(e.event.item);
@@ -127,7 +132,9 @@ function LivePlan({ agentId, theme }: { agentId: string | undefined; theme: Plug
   if (!data) {
     return (
       <View style={{ padding: 12 }}>
-        <Text style={{ color: theme.colors.foregroundMuted, fontSize: 13 }}>Sin plan todavía.</Text>
+        <Text style={{ color: theme.colors.foregroundMuted, fontSize: 13 }}>
+          {data === undefined ? "Cargando el plan…" : "Sin plan todavía."}
+        </Text>
       </View>
     );
   }
