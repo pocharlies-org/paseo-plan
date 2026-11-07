@@ -2,6 +2,7 @@ import type { PluginAgentPanelProps, PluginButtonContentProps, PluginClientConte
 import { usePaseo, useRpc } from "@getpaseo/plugin/client";
 import { useEffect, useState } from "react";
 import { Pressable, ScrollView, Text, View } from "react-native";
+import { knownSessions } from "./pills.ts";
 import { keepCommands, planFromTimelineItem, planGet, type PlanData } from "../shared/plan.ts";
 
 const marker = { completed: "✓", in_progress: "◐", pending: "○", other: "·" } as const;
@@ -102,8 +103,9 @@ function LivePlan({ agentId, theme }: { agentId: string | undefined; theme: Plug
         setData(d);
       }
     };
-    // the session id comes with the agent's snapshot; one refresh per open popover or panel
-    const session = handle.refresh().then(() => {
+    // the session id the pill already knows, else the agent's snapshot: one refresh per open popover or panel
+    const known = knownSessions.get(agentId);
+    const session = known ? Promise.resolve(known) : handle.refresh().then(() => {
       const current = handle.current();
       return current?.persistence?.sessionId ?? current?.runtimeInfo?.sessionId ?? null;
     }, () => null);

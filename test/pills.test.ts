@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { registerPlanPills, type PlanPillClient } from "../client/pills.ts";
+import { knownSessions, registerPlanPills, type PlanPillClient } from "../client/pills.ts";
 
 const planRow = (statuses: Array<"pending" | "in_progress" | "completed">) => ({
   type: "plugin",
@@ -193,6 +193,9 @@ test("the files are read by the agent's Claude session id; an agent without one 
   await h.flush();
   assert.deepEqual(h.reads, ["s-a1"]);
   assert.equal(label(pillFor(h, "a2")!), "Plan");
+  assert.equal(knownSessions.get("a1"), "s-a1"); // handed to the popover and panel, so they skip the agent refresh
+  h.update({ type: "agent_update", payload: { kind: "remove", agentId: "a1" } });
+  assert.equal(knownSessions.has("a1"), false);
 });
 
 test("a pill made before its agent had a session reads the files once the session id arrives", async () => {

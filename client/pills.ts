@@ -18,6 +18,10 @@ export interface PlanPillClient {
 type PaseoAgent = Awaited<ReturnType<PluginClientContext["paseo"]["agents"]["list"]>>["entries"][number]["agent"];
 
 const PILL_ID = "plan";
+
+// agent id → Claude session id, as the pills learn it from the directory: the popover and the panel read the files
+// right away instead of one agent refresh first, which waits seconds behind other plugins' traffic.
+export const knownSessions = new Map<string, string>();
 const PILL_TITLE = "Plan de Claude";
 
 // Same provider gate as the server half: without the plan rows there is nothing for the pill to show.
@@ -79,6 +83,7 @@ export function registerPlanPills(client: PlanPillClient, Content: ComponentType
     const l = live.get(agentId);
     if (!l) return;
     live.delete(agentId);
+    knownSessions.delete(agentId);
     l.reg.remove();
     // Releasing a subscription that never established rejects: expected, the pill is gone either way.
     void l.release().catch(() => {});
@@ -87,6 +92,7 @@ export function registerPlanPills(client: PlanPillClient, Content: ComponentType
   const upsert = (agent: PaseoAgent) => {
     if (stopped || !isClaude(agent) || agent.status === "closed" || !agent.workspaceId) return drop(agent.id);
     const sessionId = agent.persistence?.sessionId ?? agent.runtimeInfo?.sessionId ?? undefined;
+    if (sessionId) knownSessions.set(agent.id, sessionId);
     const existing = live.get(agent.id);
     if (existing) {
       if (existing.workspaceId === agent.workspaceId) {
