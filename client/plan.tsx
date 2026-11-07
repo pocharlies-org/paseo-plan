@@ -86,7 +86,8 @@ export function Plan({ item, theme }: PluginTimelineItemProps<PlanData>) {
 function LivePlan({ agentId, theme }: { agentId: string | undefined; theme: PluginTimelineItemProps["theme"] }) {
   const paseo = usePaseo();
   const getPlan = useRpc(planGet);
-  const [data, setData] = useState<PlanData | null>(null);
+  // undefined while the first read is in flight: "no plan" only once the files said so
+  const [data, setData] = useState<PlanData | null | undefined>(undefined);
   useEffect(() => {
     if (!agentId) return;
     let alive = true;
@@ -111,8 +112,9 @@ function LivePlan({ agentId, theme }: { agentId: string | undefined; theme: Plug
       const seen = tick;
       const sessionId = await session;
       const plan = sessionId ? await getPlan({ sessionIds: [sessionId] }).then((r) => r.plans[sessionId] ?? null, () => null) : null;
-      // else superseded by a newer read or a live row
-      if (plan && alive && id === boot && tick === seen) setData((shown) => keepCommands(plan, shown));
+      if (!alive || id !== boot) return; // superseded by a newer read
+      // a live row that landed while reading is newer than the files
+      setData((shown) => (plan && tick === seen ? keepCommands(plan, shown ?? null) : (shown ?? null)));
     };
     const sub = handle.timeline.subscribe((e) => {
       if (e.event.type === "timeline") apply(e.event.item);
@@ -128,7 +130,9 @@ function LivePlan({ agentId, theme }: { agentId: string | undefined; theme: Plug
   if (!data) {
     return (
       <View style={{ padding: 12 }}>
-        <Text style={{ color: theme.colors.foregroundMuted, fontSize: 13 }}>Sin plan todavía.</Text>
+        <Text style={{ color: theme.colors.foregroundMuted, fontSize: 13 }}>
+          {data === undefined ? "Cargando el plan…" : "Sin plan todavía."}
+        </Text>
       </View>
     );
   }
