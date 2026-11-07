@@ -1,3 +1,4 @@
+import { defineRpc } from "@getpaseo/plugin";
 import { z } from "zod";
 
 export const KIND = "plan-progress";
@@ -21,6 +22,14 @@ export const planSchema = z.object({
 });
 
 export type PlanData = z.output<typeof planSchema>;
+
+// The plan as Claude Code keeps it on the daemon host (~/.claude/tasks/<session id>), for whatever opens without the
+// live rows: the pill after a reload, the popover, the side panel. The live plan-progress rows then add the commands.
+export const planGet = defineRpc({
+  name: "plan.get",
+  input: z.object({ agentId: z.string().min(1) }).strict(),
+  output: z.object({ plan: planSchema.nullable() }),
+});
 
 // The task tools themselves are the plan, not work done for it.
 export const TASK_TOOLS = new Set(["TodoWrite", "TaskCreate", "TaskUpdate", "TaskList", "TaskGet", "TaskStop"]);

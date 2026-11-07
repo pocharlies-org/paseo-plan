@@ -6,6 +6,9 @@ what each task actually did: tap a task to open the commands it ran, tap a comma
 - The task in progress is open by default and shows the live commands; the others stay closed.
 - The same list opens from a `Plan` pill next to the composer (per Claude agent, with its progress `x/y`): the popover
   shows the full list without scrolling the conversation.
+- And as a `Plan` panel of the right-hand sidebar (Explorer), per agent. The pill, the popover and the panel start
+  from Claude Code's own task files on the daemon host (`~/.claude/tasks/<session id>/`), so the plan is there in a
+  long session and after a reload; the live rows then add each task's commands.
 - Commands run while no task is in progress go under "Otros comandos".
 - It replaces Paseo's own task rows and tool-call rows, so nothing is shown twice. Only Claude agents feed the card:
   with another provider you would lose the tool-call rows.

@@ -1,6 +1,7 @@
 import type { PluginServerContext } from "@getpaseo/plugin/server";
-import { KIND } from "./shared/plan.ts";
+import { KIND, planGet } from "./shared/plan.ts";
 import { PlanState } from "./server/plan.ts";
+import { planFromTasks } from "./server/tasks.ts";
 
 const THROTTLE_MS = 300;
 
@@ -11,6 +12,14 @@ interface Live {
 
 export default function contribute(server: PluginServerContext) {
   const live = new Map<string, Live>();
+
+  server.handle(planGet, async ({ agentId }, { paseo }) => {
+    const agent = paseo.agents.ref(agentId);
+    await agent.refresh();
+    const current = agent.current();
+    const sessionId = current?.persistence?.sessionId ?? current?.runtimeInfo?.sessionId;
+    return { plan: sessionId ? await planFromTasks(sessionId) : null };
+  });
 
   const stop = async (agentId: string) => {
     const l = live.get(agentId);
