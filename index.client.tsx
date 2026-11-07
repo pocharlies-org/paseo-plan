@@ -1,5 +1,5 @@
 import type { PluginClientContext } from "@getpaseo/plugin/client";
-import { Plan, PlanPanel, PlanPopover } from "./client/plan";
+import { PANEL_ID, Plan, PlanPanel, planPopover } from "./client/plan";
 import { registerPlanPills } from "./client/pills";
 import { KIND, ownCardElsewhere, planSchema } from "./shared/plan";
 
@@ -17,9 +17,9 @@ export default function contribute(client: PluginClientContext) {
     query: { itemType: "tool_call" },
     transform: ({ item }) => (ownCardElsewhere(item.name) ? undefined : drop),
   });
-  const stopPills = registerPlanPills(client, PlanPopover);
-  // The same list as a panel of the right-hand sidebar (Explorer), per agent (SC-4798).
-  const stopPanel = client.addWorkspacePanel({ id: "plan", title: "Plan", icon: "ListChecks", context: "agent", locations: ["explorer"], Component: PlanPanel });
+  const stopPills = registerPlanPills(client, planPopover((id, options) => client.openPanel(id, options)));
+  // The same list as a panel of the right-hand sidebar (Explorer), per agent (SC-4798), opened from the popover.
+  const stopPanel = client.addWorkspacePanel({ id: PANEL_ID, title: "Plan", icon: "ListChecks", context: "agent", locations: ["explorer"], Component: PlanPanel });
   return () => {
     stopPills();
     stopPanel();

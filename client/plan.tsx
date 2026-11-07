@@ -1,4 +1,4 @@
-import type { PluginAgentPanelProps, PluginButtonContentProps, PluginTimelineItemProps } from "@getpaseo/plugin/client";
+import type { PluginAgentPanelProps, PluginButtonContentProps, PluginClientContext, PluginTimelineItemProps } from "@getpaseo/plugin/client";
 import { usePaseo, useRpc } from "@getpaseo/plugin/client";
 import { useEffect, useState } from "react";
 import { Pressable, ScrollView, Text, View } from "react-native";
@@ -134,17 +134,36 @@ function LivePlan({ agentId, theme }: { agentId: string | undefined; theme: Plug
   return <PlanView data={data} theme={theme} />;
 }
 
-export function PlanPopover({ theme, ...props }: PluginButtonContentProps) {
-  // A composer pill is always registered in agent context; the type allows the workspace variant too.
-  const agentId = props.context === "agent" ? props.agentId : undefined;
-  return (
-    <View style={{ paddingHorizontal: 10, paddingVertical: 4, minWidth: 280, maxWidth: 420 }}>
-      <LivePlan agentId={agentId} theme={theme} />
-    </View>
-  );
-}
+// The host lists agent panels in no menu (0.15.1): the popover is the way into the side panel.
+export const PANEL_ID = "plan";
+type OpenPanel = PluginClientContext["openPanel"];
 
-export function PlanPanel({ agentId, theme }: PluginAgentPanelProps) {
+export const planPopover = (openPanel: OpenPanel) =>
+  function PlanPopover({ theme, close, ...props }: PluginButtonContentProps) {
+    // A composer pill is always registered in agent context; the type allows the workspace variant too.
+    const agentId = props.context === "agent" ? props.agentId : undefined;
+    return (
+      <View style={{ paddingHorizontal: 10, paddingVertical: 4, minWidth: 280, maxWidth: 420 }}>
+        <LivePlan agentId={agentId} theme={theme} />
+        {agentId ? (
+          <Pressable
+            onPress={() => {
+              openPanel(PANEL_ID, { workspaceId: props.workspaceId, agentId, location: "explorer" });
+              close();
+            }}
+            style={{ paddingVertical: 8, borderTopWidth: 1, borderTopColor: theme.colors.border }}
+          >
+            <Text style={{ color: theme.colors.accent, fontSize: 13 }}>Ver en la barra lateral</Text>
+          </Pressable>
+        ) : null}
+      </View>
+    );
+  };
+
+export function PlanPanel(props: PluginAgentPanelProps) {
+  // 0.15 hands the agent in params and keeps agentId as deprecated; 0.11 only has agentId.
+  const agentId = (props as { params?: { agentId?: string } }).params?.agentId ?? props.agentId;
+  const { theme } = props;
   return (
     <ScrollView contentContainerStyle={{ paddingHorizontal: 12, paddingVertical: 4 }}>
       <LivePlan agentId={agentId} theme={theme} />
