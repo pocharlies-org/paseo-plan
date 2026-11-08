@@ -26,15 +26,19 @@ export function ticketKey(cwd: string, branch: string, prompt: string): string |
   );
 }
 
-const heading = (line: string) => /^(#{1,6})\s+(.*)$/.exec(line);
+// A markdown heading (`## Objetivo`) or a Jira wiki one (`h2. Objetivo`, descriptions written in wiki markup): level and title.
+const heading = (line: string) => {
+  const m = /^(?:(#{1,6})|h([1-6])\.)\s+(.*)$/.exec(line);
+  return m && { level: m[1]?.length ?? Number(m[2]), title: m[3] };
+};
 
 /** The body of the first section whose title matches, up to the next heading of the same or a higher level. */
 function section(md: string, title: RegExp): string | null {
   const lines = md.split("\n");
-  const start = lines.findIndex((l) => title.test(heading(l)?.[2] ?? "\0"));
+  const start = lines.findIndex((l) => title.test(heading(l)?.title ?? "\0"));
   if (start < 0) return null;
-  const level = heading(lines[start])![1].length;
-  const end = lines.findIndex((l, i) => i > start && (heading(l)?.[1].length ?? 7) <= level);
+  const level = heading(lines[start])!.level;
+  const end = lines.findIndex((l, i) => i > start && (heading(l)?.level ?? 7) <= level);
   return lines.slice(start + 1, end < 0 ? undefined : end).join("\n");
 }
 
@@ -57,15 +61,18 @@ export function planFrom(md: string, ticketKey: string | null = null): Plan {
   return { ticketKey, objetivo, criterios, fuera_de_alcance };
 }
 
+/** What `jira_rest.py criterios <KEY>` prints (contract cli.jira-rest.criterios.v1): each criterion with its state read as the Done gate reads it. */
+export interface Ticket {
+  resumen: string;
+  descripcion: string;
+  spec: string;
+  criterios: Array<{ texto: string; status: string; evidencia: string }>;
+}
+
 // The CTO's account: a live session reads its ticket as cto, and jira_rest.py in strict mode refuses a read without a role (spike, SC-4804).
-async function jira(args: string[]): Promise<string | null> {
-  try {
-    const { stdout } = await run("python3", [JIRA, ...args], { env: { ...process.env, JIRA_ROL: "cto" }, timeout: 30_000, maxBuffer: 4 << 20 });
-    return stdout;
-  } catch (e) {
-    if (/no hay adjunto/.test(String((e as { stderr?: unknown }).stderr))) return null;
-    throw e;
-  }
+async function jira(key: string): Promise<Ticket> {
+  const { stdout } = await run("python3", [JIRA, "criterios", key], { env: { ...process.env, JIRA_ROL: "cto" }, timeout: 60_000, maxBuffer: 4 << 20 });
+  return JSON.parse(stdout);
 }
 
 const branchOf = (cwd: string) => run("git", ["-C", cwd, "branch", "--show-current"], { timeout: 5_000 }).then((r) => r.stdout.trim(), () => "");
@@ -96,22 +103,24 @@ export async function firstPrompt(cwd: string, sessionId: string | null, root = 
 }
 
 /**
- * The plan of a session, by source in this order: the ticket's `00-spec.md`, the ticket's description, the `## Plan` or
- * `## Criterios` of the worktree's CLAUDE.md, of the first prompt. Null with neither a ticket nor criteria. Jira not
- * answering throws: the caller keeps the anchor it had.
+ * The plan of a session. With a ticket, its criteria with their state and evidence as the Done gate reads them (`00-spec.md`,
+ * else the description; `jira_rest.py criterios`), its objective (`## Objetivo` of the description, else of the spec, else the
+ * summary) and what is out of scope. Without ticket criteria, the `## Plan`/`## Criterios` of the worktree's CLAUDE.md, else of
+ * the first prompt. Null with neither a ticket nor criteria. Jira not answering throws: the caller keeps the anchor it had.
  */
 export async function buildPlan(cwd: string, sessionId: string | null, read = jira): Promise<Plan | null> {
   const prompt = await firstPrompt(cwd, sessionId);
   const key = ticketKey(cwd, await branchOf(cwd), prompt);
   let plan: Plan | null = null;
   if (key) {
-    const spec = await read(["get", key, "00-spec.md"]);
-    plan = spec === null ? null : planFrom(spec, key);
-    if (!plan?.criterios.length) {
-      const ver = (await read(["ver", key])) ?? "";
-      plan = planFrom(ver, key);
-      plan.objetivo ||= ver.split("\n")[0].split(" · ").slice(1).join(" · ");
-    }
+    const t = await read(key);
+    const [desc, spec] = [planFrom(t.descripcion), planFrom(t.spec)];
+    plan = {
+      ticketKey: key,
+      objetivo: desc.objetivo || spec.objetivo || t.resumen,
+      criterios: t.criterios.map((c) => ({ texto: c.texto, como_se_verifica: "", status: c.status, evidencia: c.evidencia })),
+      fuera_de_alcance: spec.fuera_de_alcance.length ? spec.fuera_de_alcance : desc.fuera_de_alcance,
+    };
   }
   if (plan?.criterios.length) return plan;
   for (const md of [await readFile(join(cwd, "CLAUDE.md"), "utf8").catch(() => ""), prompt]) {

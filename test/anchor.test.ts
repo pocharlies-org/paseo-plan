@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { mkdtemp, mkdir, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { buildPlan, firstPrompt, planFrom, readAnchor, saveAnchor, setGuard, ticketKey } from "../server/anchor.ts";
+import { buildPlan, firstPrompt, planFrom, readAnchor, saveAnchor, setGuard, ticketKey, type Ticket } from "../server/anchor.ts";
 
 const SPEC = `Rol: supervisor · Estado: BORRADOR
 
@@ -48,25 +48,49 @@ test("a spec gives its first criteria section, top-level items only, with the bo
   assert.deepEqual(planFrom("nada").criterios, []);
 });
 
-test("sources in order: 00-spec.md, then the description, then the worktree's CLAUDE.md; Jira failing throws", async () => {
+const TICKET = (over: Partial<Ticket> = {}): Ticket => ({ resumen: "El resumen", descripcion: "", spec: "", criterios: [], ...over });
+
+test("with a ticket, criteria and their state come from jira_rest criterios; else the worktree's CLAUDE.md; Jira failing throws", async () => {
   const cwd = await mkdtemp(join(tmpdir(), "anchor-"));
   const wt = join(cwd, ".claude", "worktrees", "SC-1-x");
   await mkdir(wt, { recursive: true });
-  const calls: string[][] = [];
-  const jira = (spec: string | null, ver: string) => async (args: string[]) => (calls.push(args), args[0] === "get" ? spec : ver);
+  const asked: string[] = [];
+  const read = (t: Ticket) => async (key: string) => (asked.push(key), t);
+  const criterios = [{ texto: "Uno", status: "verificada", evidencia: "`npm test` → 24/24" }, { texto: "Dos", status: "abierta", evidencia: "" }];
 
-  assert.equal((await buildPlan(wt, null, jira(SPEC, "")))?.criterios.length, 2);
-  assert.deepEqual(calls, [["get", "SC-1", "00-spec.md"]]);
-
-  const desc = (await buildPlan(wt, null, jira(null, "SC-1 · El resumen\n## Criterios de aceptación\n- [ ] De la descripción\n")))!;
-  assert.deepEqual([desc.objetivo, desc.criterios[0].texto], ["El resumen", "De la descripción"]);
+  const plan = (await buildPlan(wt, null, read(TICKET({ spec: SPEC, criterios }))))!;
+  assert.deepEqual(asked, ["SC-1"]);
+  assert.deepEqual(plan.criterios, [
+    { texto: "Uno", como_se_verifica: "", status: "verificada", evidencia: "`npm test` → 24/24" },
+    { texto: "Dos", como_se_verifica: "", status: "abierta", evidencia: "" },
+  ]);
+  assert.deepEqual([plan.objetivo, plan.fuera_de_alcance], ["Que la pastilla enseñe el plan.", ["El Stop hook."]]);
 
   await writeFile(join(wt, "CLAUDE.md"), "## Criterios\n- Del CLAUDE.md\n");
-  const local = (await buildPlan(wt, null, jira(null, "SC-1 · El resumen\n")))!;
+  const local = (await buildPlan(wt, null, read(TICKET())))!;
   assert.deepEqual([local.ticketKey, local.objetivo, local.criterios[0].texto], ["SC-1", "El resumen", "Del CLAUDE.md"]);
 
-  assert.equal(await buildPlan(cwd, null, jira(null, "")), null); // no ticket and no criteria: no anchor
+  assert.equal(await buildPlan(cwd, null, read(TICKET())), null); // no ticket and no criteria: no anchor
   await assert.rejects(buildPlan(wt, null, async () => Promise.reject(new Error("jira down"))));
+});
+
+test("the objective is always there: the description's, else the spec's, else the summary (SC-4805, INFRA-1196)", async () => {
+  const wt = join(await mkdtemp(join(tmpdir(), "anchor-")), ".claude", "worktrees", "SC-4805-x");
+  await mkdir(wt, { recursive: true });
+  const criterios = [{ texto: "c", status: "abierta", evidencia: "" }];
+  const objetivo = async (t: Partial<Ticket>) => (await buildPlan(wt, null, async () => TICKET({ criterios, ...t })))!.objetivo;
+  // SC-4805: the spec has no «## Objetivo»; the description has it, followed by «## Por qué»
+  assert.equal(
+    await objetivo({ spec: "# SC-4805 · Supervisor\n\nHistoria E.\n\n## Criterios de aceptación\n- [ ] c\n", descripcion: "Historia E.\n## Objetivo\nEn la compañía el supervisor solo autoenvía lo que está en el plan\n## Por qué\nDGX-674.\n" }),
+    "En la compañía el supervisor solo autoenvía lo que está en el plan",
+  );
+  // INFRA-1196: the spec says «# Qué y por qué», the description is Jira wiki markup («h2. Objetivo»)
+  assert.equal(
+    await objetivo({ spec: "# Qué y por qué\n\nQue los agentes…\n\n# Criterios de aceptación\n- [ ] c\n", descripcion: "h2. Objetivo\nQue los agentes puedan editar desde el MCP socialmedia\nh2. Contexto / evidencia\n- Caption\n" }),
+    "Que los agentes puedan editar desde el MCP socialmedia",
+  );
+  assert.equal(await objetivo({ spec: "## Objetivo\nDel spec\n" }), "Del spec");
+  assert.equal(await objetivo({}), "El resumen");
 });
 
 test("the first prompt is the first real user line of the transcript", async () => {
