@@ -23,6 +23,9 @@ contracts:
       rename atómico, y el botón «Garantizar plan» de la pastilla cambia `guard`. JSON {ticketKey: string|null,
       objetivo: string, criterios: [{texto, como_se_verifica, status: abierta|verificada, evidencia: string}],
       fuera_de_alcance: [string], guard: boolean}. `guard` se conserva al refrescar y no se enciende con 0 criterios.
+      Con ticket, criterios, `status` y `evidencia` salen de `jira_rest.py criterios <KEY>` (cli.jira-rest.criterios.v1 de
+      x86-host-runtime, el mismo lector que el gate de Done), y `objetivo` nunca va vacío: el `## Objetivo` de la
+      descripción, si no el del spec, si no el resumen.
       Consumidores: paseo-sugiere `server/suggest.ts` (anchorOf/guardedPlan/anchorKey; con `guard:true` y criterios
       manda el ancla en `contexto.plan`, docs/servicio-sugiere.md §2) y el Stop hook de SC-4806 (claude-harness, por
       `$PASEO_AGENT_ID`).
