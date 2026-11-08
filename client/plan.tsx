@@ -3,6 +3,7 @@ import { usePaseo, useRpc } from "@getpaseo/plugin/client";
 import { useEffect, useState } from "react";
 import { Pressable, ScrollView, Text, View } from "react-native";
 import { knownSessions } from "./pills.ts";
+import { anchorFromTimelineItem, anchorGet, anchorGuard, type Anchor } from "../shared/anchor.ts";
 import { keepCommands, planFromTimelineItem, planGet, splitPlans, type PlanData } from "../shared/plan.ts";
 
 const marker = { completed: "✓", in_progress: "◐", pending: "○", other: "·" } as const;
@@ -114,12 +115,55 @@ function PlanHistory({ data, theme }: { data: PlanData; theme: PluginTimelineIte
   );
 }
 
+// The ticket's plan above the tasks (SC-4804): each criterion with its state and evidence, and «Garantizar plan».
+function AnchorView({ agentId, anchor, onChange, theme }: { agentId: string; anchor: Anchor | null | undefined; onChange: (a: Anchor | null) => void; theme: PluginTimelineItemProps["theme"] }) {
+  const c = theme.colors;
+  const setGuard = useRpc(anchorGuard);
+  const [busy, setBusy] = useState(false);
+  if (anchor === undefined) return null;
+  if (!anchor) return <Text style={{ color: c.foregroundMuted, fontSize: 13, paddingVertical: 8 }}>Sin plan</Text>;
+  const disabled = busy || !anchor.criterios.length;
+  return (
+    <View style={{ paddingVertical: 6, gap: 4, borderBottomWidth: 1, borderBottomColor: c.border }}>
+      <Text style={{ color: c.foreground, fontSize: 13, fontWeight: "600" }}>{anchor.ticketKey ? `Plan de ${anchor.ticketKey}` : "Plan"}</Text>
+      {anchor.objetivo ? <Text style={{ color: c.foregroundMuted, fontSize: 12 }}>{anchor.objetivo}</Text> : null}
+      {anchor.criterios.length ? null : <Text style={{ color: c.foregroundMuted, fontSize: 13 }}>Sin criterios</Text>}
+      {anchor.criterios.map((k, i) => (
+        <View key={i} style={{ flexDirection: "row", gap: 10, paddingVertical: 3 }}>
+          <Text style={{ color: k.status === "verificada" ? c.statusSuccess : c.foregroundMuted, width: 18, textAlign: "center", fontSize: 15 }}>
+            {k.status === "verificada" ? "✓" : "○"}
+          </Text>
+          <View style={{ flex: 1 }}>
+            <Text style={{ color: c.foreground, fontSize: 13, lineHeight: 18 }}>{`C${i + 1} · ${k.texto}`}</Text>
+            {k.evidencia ? <Text style={{ ...mono, color: c.foregroundMuted, fontSize: 11 }}>{k.evidencia}</Text> : null}
+          </View>
+        </View>
+      ))}
+      <Pressable
+        disabled={disabled}
+        onPress={() => {
+          setBusy(true);
+          void setGuard({ agentId, guard: !anchor.guard }).then((r) => onChange(r.anchor), () => {}).finally(() => setBusy(false));
+        }}
+        style={{ paddingVertical: 8, opacity: disabled ? 0.5 : 1 }}
+      >
+        <Text style={{ color: anchor.guard ? c.statusSuccess : c.accent, fontSize: 13 }}>
+          {anchor.guard ? "✓ Garantizar plan · encendido" : "Garantizar plan"}
+        </Text>
+      </Pressable>
+    </View>
+  );
+}
+
 // The same list at the composer and in the side panel: bootstrap from the task files on the daemon host (plan.get, so a
 // long session or a reload still finds it) and follow live events; a replaced epoch or a restored subscription
 // rereads, since live events alone no longer tell all.
 function LivePlan({ agentId, theme }: { agentId: string | undefined; theme: PluginTimelineItemProps["theme"] }) {
   const paseo = usePaseo();
   const getPlan = useRpc(planGet);
+  const getAnchor = useRpc(anchorGet);
+  // undefined while reading, null = no anchor («Sin plan»)
+  const [anchor, setAnchor] = useState<Anchor | null | undefined>(undefined);
   // undefined while the first read is in flight: "no plan" only once the files said so
   const [data, setData] = useState<PlanData | null | undefined>(undefined);
   useEffect(() => {
@@ -130,6 +174,8 @@ function LivePlan({ agentId, theme }: { agentId: string | undefined; theme: Plug
     let boot = 0;
     const handle = paseo.agents.ref(agentId);
     const apply = (item: unknown) => {
+      const a = anchorFromTimelineItem(item);
+      if (a && alive) setAnchor(a);
       const d = planFromTimelineItem(item);
       if (d && alive) {
         tick++;
@@ -157,21 +203,24 @@ function LivePlan({ agentId, theme }: { agentId: string | undefined; theme: Plug
     });
     sub.ready.catch(() => {}); // establishment failure leaves the list on the bootstrapped plan
     void bootstrap();
+    void getAnchor({ agentId }).then((r) => alive && setAnchor((shown) => shown ?? r.anchor), () => alive && setAnchor((shown) => shown ?? null));
     return () => {
       alive = false;
       void sub.release().catch(() => {});
     };
-  }, [paseo, getPlan, agentId]);
-  if (!data) {
-    return (
-      <View style={{ padding: 12 }}>
-        <Text style={{ color: theme.colors.foregroundMuted, fontSize: 13 }}>
-          {data === undefined ? "Cargando el plan…" : "Sin plan todavía."}
+  }, [paseo, getPlan, getAnchor, agentId]);
+  return (
+    <View>
+      {agentId ? <AnchorView agentId={agentId} anchor={anchor} onChange={setAnchor} theme={theme} /> : null}
+      {data ? (
+        <PlanHistory data={data} theme={theme} />
+      ) : (
+        <Text style={{ color: theme.colors.foregroundMuted, fontSize: 13, paddingVertical: 12 }}>
+          {data === undefined ? "Cargando las tareas…" : "Sin tareas todavía."}
         </Text>
-      </View>
-    );
-  }
-  return <PlanHistory data={data} theme={theme} />;
+      )}
+    </View>
+  );
 }
 
 // The host lists agent panels in no menu (0.15.1): the popover is the way into the side panel.

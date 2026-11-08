@@ -1,5 +1,7 @@
-import type { PluginServerContext } from "@getpaseo/plugin/server";
+import type { PluginHookAgent, PluginHookContext, PluginServerContext } from "@getpaseo/plugin/server";
+import { anchorGet, anchorGuard, anchorRow } from "./shared/anchor.ts";
 import { KIND, planGet, type PlanData } from "./shared/plan.ts";
+import { buildPlan, readAnchor, saveAnchor, setGuard } from "./server/anchor.ts";
 import { PlanState } from "./server/plan.ts";
 import { planFromTasks } from "./server/tasks.ts";
 
@@ -17,6 +19,27 @@ export default function contribute(server: PluginServerContext) {
     plans: Object.fromEntries(await Promise.all(sessionIds.map(async (id) => [id, await planFromTasks(id)] as const))),
   }));
 
+  server.handle(anchorGet, ({ agentId }) => ({ anchor: readAnchor(agentId) }));
+  server.handle(anchorGuard, async ({ agentId, guard }, { paseo }) => {
+    const anchor = setGuard(agentId, guard);
+    if (anchor) await paseo.agents.ref(agentId).timeline.append(anchorRow(anchor)).catch(() => {}); // a closed agent has no timeline: the file is what counts
+    return { anchor };
+  });
+
+  // The plan anchor (SC-4804), rebuilt at every turn start and end so an edited spec re-anchors; Jira not answering keeps the old one.
+  const anchor = async (agent: PluginHookAgent, paseo: PluginHookContext["paseo"]) => {
+    const handle = paseo.agents.ref(agent.id);
+    const sessionId = await handle.refresh().then(() => {
+      const current = handle.current();
+      return current?.persistence?.sessionId ?? current?.runtimeInfo?.sessionId ?? null;
+    }, () => null);
+    const plan = await buildPlan(agent.cwd, sessionId);
+    if (plan) await handle.timeline.append(anchorRow(saveAnchor(agent.id, plan)));
+  };
+  const refreshAnchor = (agent: PluginHookAgent, paseo: PluginHookContext["paseo"]) => {
+    if (agent.provider.startsWith("claude")) void anchor(agent, paseo).catch((e) => console.error("plan anchor failed", e));
+  };
+
   const stop = async (agentId: string) => {
     const l = live.get(agentId);
     if (!l) return;
@@ -31,6 +54,7 @@ export default function contribute(server: PluginServerContext) {
   };
 
   server.on("agent.turn_started", async (event, { paseo }) => {
+    refreshAnchor(event.agent, paseo);
     if (!event.agent.provider.startsWith("claude") || live.has(event.agent.id)) return;
     const agent = paseo.agents.ref(event.agent.id);
     const state = new PlanState();
@@ -89,7 +113,10 @@ export default function contribute(server: PluginServerContext) {
     for (const row of page.entries) state.observe(row.item as never);
   });
 
-  server.on("agent.turn_ended", (event) => stop(event.agent.id));
+  server.on("agent.turn_ended", (event, { paseo }) => {
+    refreshAnchor(event.agent, paseo);
+    return stop(event.agent.id);
+  });
   server.on("agent.closed", (event) => stop(event.agent.id));
 
   return () => {

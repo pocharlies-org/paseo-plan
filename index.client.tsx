@@ -2,6 +2,7 @@ import type { PluginClientContext } from "@getpaseo/plugin/client";
 import { PANEL_ID, Plan, PlanPanel, planPopover } from "./client/plan";
 import { registerPlanPills } from "./client/pills";
 import { KIND, ownCardElsewhere, planSchema } from "./shared/plan";
+import { ANCHOR_KIND, anchorSchema } from "./shared/anchor";
 
 // The card holds the task list and every command, so Paseo's own task rows and tool-call rows go — except a call another
 // plugin draws as its own card, which is left for that plugin. The server only feeds Claude agents: a provider with no card
@@ -10,6 +11,8 @@ import { KIND, ownCardElsewhere, planSchema } from "./shared/plan";
 // (plan.get) and then follow the row the server appends, never a second fold.
 export default function contribute(client: PluginClientContext) {
   client.addTimelineRenderer({ kind: KIND, version: 1, schema: planSchema, Component: Plan });
+  // The anchor row only feeds the pill, the popover and the panel: it draws nothing in the conversation.
+  client.addTimelineRenderer({ kind: ANCHOR_KIND, version: 1, schema: anchorSchema, Component: () => null });
   const drop = { items: [] };
   client.addTimelineTransformer({ id: "plan-todo", query: { itemType: "todo" }, transform: () => drop });
   client.addTimelineTransformer({
