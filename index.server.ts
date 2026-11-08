@@ -1,5 +1,4 @@
-import type { PaseoApi } from "@getpaseo/client";
-import type { PluginHookAgent, PluginServerContext } from "@getpaseo/plugin/server";
+import type { PluginHookAgent, PluginHookContext, PluginServerContext } from "@getpaseo/plugin/server";
 import { anchorGet, anchorGuard, anchorRow } from "./shared/anchor.ts";
 import { KIND, planGet, type PlanData } from "./shared/plan.ts";
 import { buildPlan, readAnchor, saveAnchor, setGuard } from "./server/anchor.ts";
@@ -28,7 +27,7 @@ export default function contribute(server: PluginServerContext) {
   });
 
   // The plan anchor (SC-4804), rebuilt at every turn start and end so an edited spec re-anchors; Jira not answering keeps the old one.
-  const anchor = async (agent: PluginHookAgent, paseo: PaseoApi) => {
+  const anchor = async (agent: PluginHookAgent, paseo: PluginHookContext["paseo"]) => {
     const handle = paseo.agents.ref(agent.id);
     const sessionId = await handle.refresh().then(() => {
       const current = handle.current();
@@ -37,7 +36,7 @@ export default function contribute(server: PluginServerContext) {
     const plan = await buildPlan(agent.cwd, sessionId);
     if (plan) await handle.timeline.append(anchorRow(saveAnchor(agent.id, plan)));
   };
-  const refreshAnchor = (agent: PluginHookAgent, paseo: PaseoApi) => {
+  const refreshAnchor = (agent: PluginHookAgent, paseo: PluginHookContext["paseo"]) => {
     if (agent.provider.startsWith("claude")) void anchor(agent, paseo).catch((e) => console.error("plan anchor failed", e));
   };
 
