@@ -9,12 +9,12 @@ import { anchorSchema, type Anchor } from "../shared/anchor.ts";
 
 const run = promisify(execFile);
 // CONTRACT: file.paseo-plan.anchor.v1 (~/.local/state/paseo-plan/anchor-<agentId>.json, shape in shared/anchor.ts)
-export const ANCHOR_DIR = join(homedir(), ".local", "state", "paseo-plan");
+const ANCHOR_DIR = join(homedir(), ".local", "state", "paseo-plan");
 const JIRA = join(homedir(), ".local", "libexec", "x86-host-runtime", "jira_rest.py");
 const KEY = /\b([A-Z][A-Z0-9]+-\d+)\b/;
 const SESSION = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
-export type Plan = Omit<Anchor, "guard">;
+type Plan = Omit<Anchor, "guard">;
 
 /** The ticket of a session: its worktree (`.claude/worktrees/<KEY>-…`), else its branch, else the first key of its first prompt. */
 export function ticketKey(cwd: string, branch: string, prompt: string): string | null {
@@ -29,7 +29,7 @@ export function ticketKey(cwd: string, branch: string, prompt: string): string |
 const heading = (line: string) => /^(#{1,6})\s+(.*)$/.exec(line);
 
 /** The body of the first section whose title matches, up to the next heading of the same or a higher level. */
-export function section(md: string, title: RegExp): string | null {
+function section(md: string, title: RegExp): string | null {
   const lines = md.split("\n");
   const start = lines.findIndex((l) => title.test(heading(l)?.[2] ?? "\0"));
   if (start < 0) return null;
