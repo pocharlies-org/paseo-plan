@@ -10,6 +10,10 @@ what each task actually did: tap a task to open the commands it ran, tap a comma
   top of the popover (Paseo lists agent panels in no menu). The pill, the popover and the panel start
   from Claude Code's own task files on the daemon host (`~/.claude/tasks/<session id>/`), so the plan is there in a
   long session and after a reload; the live rows then add each task's commands.
+- One plan per approval: when Claude writes the list of a new plan (two or more tasks at once) after every earlier task
+  was completed, that list is the plan of the pill and of the card. The earlier plans stay in the popover and the panel,
+  above the current one, each folded to one line (`Plan 1 · 6/6 ▸`) that opens on tap. A single task added later
+  belongs to the plan it follows.
 - Commands run while no task is in progress go under "Otros comandos".
 - It replaces Paseo's own task rows and tool-call rows, so nothing is shown twice. Only Claude agents feed the card:
   with another provider you would lose the tool-call rows.

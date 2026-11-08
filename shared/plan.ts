@@ -10,6 +10,8 @@ export const planSchema = z.object({
       text: z.string(),
       activeForm: z.string().optional(),
       status: z.enum(["pending", "in_progress", "completed", "other"]),
+      // Which of the session's plans the task belongs to, 0 first (from the task files, see server/tasks.ts).
+      plan: z.number().int().nonnegative().optional(),
       commands: z.array(
         z.object({
           label: z.string(),
@@ -58,9 +60,17 @@ export const keepCommands = (files: PlanData, live: PlanData | null): PlanData =
   return { tasks: [...other, ...files.tasks.map((t) => ({ ...t, commands: byText.get(t.text) ?? t.commands }))] };
 };
 
-// Short progress for the pill's label; the popover carries the full list.
+// The latest plan (with the other-commands entry and any task not placed yet) and the earlier ones, oldest first: the
+// pill and the conversation card show the latest, the popover and the panel also list the earlier ones folded (SC-5050).
+export const splitPlans = (data: PlanData) => {
+  const last = Math.max(0, ...data.tasks.map((t) => t.plan ?? 0));
+  const earlier = Array.from({ length: last }, (_, i) => data.tasks.filter((t) => t.plan === i)).filter((g) => g.length);
+  return { current: { tasks: data.tasks.filter((t) => (t.plan ?? last) === last) }, earlier };
+};
+
+// Short progress of the latest plan for the pill's label; the popover carries the full list.
 export const planProgressLabel = (data: PlanData): string => {
-  const tasks = data.tasks.filter((t) => t.status !== "other");
+  const tasks = splitPlans(data).current.tasks.filter((t) => t.status !== "other");
   if (!tasks.length) return "Plan";
   return `Plan ${tasks.filter((t) => t.status === "completed").length}/${tasks.length}`;
 };
