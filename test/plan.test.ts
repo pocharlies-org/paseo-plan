@@ -61,3 +61,14 @@ test("a reread from the task files keeps the commands the live rows showed", asy
   assert.deepEqual(keepCommands(files, live).tasks.map((t) => [t.text, t.status, t.commands.length]), [["", "other", 1], ["t1", "completed", 1], ["t2", "pending", 0]]);
   assert.equal(keepCommands(files, null), files);
 });
+
+test("the pill counts the latest plan; the earlier ones come apart, oldest first", async () => {
+  const { planProgressLabel, splitPlans } = await import("../shared/plan.ts");
+  const t = (key: string, status: "completed" | "pending" | "other", plan?: number) => ({ key, text: key, status, commands: [], ...(plan === undefined ? {} : { plan }) });
+  const data = { tasks: [t("_other", "other"), t("1", "completed", 0), t("2", "completed", 1), t("3", "completed", 2), t("4", "pending", 2)] };
+  assert.equal(planProgressLabel(data), "Plan 1/2");
+  const { current, earlier } = splitPlans(data);
+  assert.deepEqual(current.tasks.map((x) => x.key), ["_other", "3", "4"]);
+  assert.deepEqual(earlier.map((g) => g.map((x) => x.key)), [["1"], ["2"]]);
+  assert.deepEqual(splitPlans({ tasks: [t("1", "pending")] }), { current: { tasks: [t("1", "pending")] }, earlier: [] });
+});

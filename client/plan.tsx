@@ -3,7 +3,7 @@ import { usePaseo, useRpc } from "@getpaseo/plugin/client";
 import { useEffect, useState } from "react";
 import { Pressable, ScrollView, Text, View } from "react-native";
 import { knownSessions } from "./pills.ts";
-import { keepCommands, planFromTimelineItem, planGet, type PlanData } from "../shared/plan.ts";
+import { keepCommands, planFromTimelineItem, planGet, splitPlans, type PlanData } from "../shared/plan.ts";
 
 const marker = { completed: "✓", in_progress: "◐", pending: "○", other: "·" } as const;
 const mono = { fontFamily: "monospace", lineHeight: 18 } as const;
@@ -77,8 +77,41 @@ function PlanView({ data, theme }: { data: PlanData; theme: PluginTimelineItemPr
   );
 }
 
+// The conversation card shows the latest plan only: the earlier ones are in the popover and the panel (SC-5050).
 export function Plan({ item, theme }: PluginTimelineItemProps<PlanData>) {
-  return <PlanView data={item.data} theme={theme} />;
+  return <PlanView data={splitPlans(item.data).current} theme={theme} />;
+}
+
+// An earlier plan, folded to one line with its progress until tapped.
+function EarlierPlan({ n, tasks, theme }: { n: number; tasks: PlanData["tasks"]; theme: PluginTimelineItemProps["theme"] }) {
+  const [open, setOpen] = useState(false);
+  const c = theme.colors;
+  const done = tasks.filter((t) => t.status === "completed").length;
+  return (
+    <View style={{ borderBottomWidth: 1, borderBottomColor: c.border }}>
+      <Pressable onPress={() => setOpen(!open)} style={{ flexDirection: "row", alignItems: "center", gap: 10, paddingVertical: 8 }}>
+        <Text style={{ color: c.foregroundMuted, fontSize: 13, flex: 1 }}>{`Plan ${n} · ${done}/${tasks.length}`}</Text>
+        <Text style={{ color: c.foregroundMuted, fontSize: 12 }}>{open ? "▾" : "▸"}</Text>
+      </Pressable>
+      {open ? <PlanView data={{ tasks }} theme={theme} /> : null}
+    </View>
+  );
+}
+
+// The earlier plans folded on top, oldest first, then the latest one open.
+function PlanHistory({ data, theme }: { data: PlanData; theme: PluginTimelineItemProps["theme"] }) {
+  const { current, earlier } = splitPlans(data);
+  return (
+    <View>
+      {earlier.map((tasks, i) => (
+        <EarlierPlan key={tasks[0].key} n={i + 1} tasks={tasks} theme={theme} />
+      ))}
+      {earlier.length ? (
+        <Text style={{ color: theme.colors.foregroundMuted, fontSize: 13, paddingTop: 8 }}>{`Plan ${earlier.length + 1} · actual`}</Text>
+      ) : null}
+      <PlanView data={current} theme={theme} />
+    </View>
+  );
 }
 
 // The same list at the composer and in the side panel: bootstrap from the task files on the daemon host (plan.get, so a
@@ -138,7 +171,7 @@ function LivePlan({ agentId, theme }: { agentId: string | undefined; theme: Plug
       </View>
     );
   }
-  return <PlanView data={data} theme={theme} />;
+  return <PlanHistory data={data} theme={theme} />;
 }
 
 // The host lists agent panels in no menu (0.15.1): the popover is the way into the side panel.
