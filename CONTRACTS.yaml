@@ -26,6 +26,8 @@ contracts:
       Con ticket, criterios, `status` y `evidencia` salen de `jira_rest.py criterios <KEY>` (cli.jira-rest.criterios.v1 de
       x86-host-runtime, el mismo lector que el gate de Done), y `objetivo` nunca va vacío: el `## Objetivo` de la
       descripción, si no el del spec, si no el resumen.
+      `ticketKey`: la del worktree, si no la de la rama, si no la primera del primer prompt sin el marcado de sus etiquetas
+      (el `source-agent-title` de un prompt que envía otra sesión no es el ticket de esta). Forma sin cambios.
       Consumidores: paseo-sugiere `server/suggest.ts` (anchorOf/guardedPlan/anchorKey; con `guard:true` y criterios
       manda el ancla en `contexto.plan`, docs/servicio-sugiere.md §2) y el Stop hook de SC-4806 (claude-harness, por
       `$PASEO_AGENT_ID`).
