@@ -21,7 +21,8 @@ export function ticketKey(cwd: string, branch: string, prompt: string): string |
   return (
     /\.claude\/worktrees\/([A-Z][A-Z0-9]+-\d+)(?![\d])/.exec(cwd)?.[1] ??
     /^([A-Z][A-Z0-9]+-\d+)(?![\d])/.exec(branch)?.[1] ??
-    KEY.exec(prompt)?.[1] ??
+    // tag markup out: a prompt sent by another session comes wrapped in <paseo-system source-agent-title="<its ticket> …">
+    KEY.exec(prompt.replace(/<[^>]*>/g, " "))?.[1] ??
     null
   );
 }

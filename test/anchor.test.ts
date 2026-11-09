@@ -32,6 +32,8 @@ test("the ticket comes from the worktree, else the branch, else the first key of
   assert.equal(ticketKey("/r", "DGX-12-x", "SC-1"), "DGX-12");
   assert.equal(ticketKey("/r", "main", "Historia en vivo SC-4804 (y SC-4803)"), "SC-4804");
   assert.equal(ticketKey("/r", "main", "sin ticket"), null);
+  const sent = '<paseo-system version="1" kind="agent-message" source-agent-title="SC-4804 · Pastilla">\nPrueba de SC-4805\n</paseo-system>';
+  assert.equal(ticketKey("/r", "main", sent), "SC-4805", "the launching session's title is not this session's ticket");
 });
 
 test("a spec gives its first criteria section, top-level items only, with the box as status; objective and out of scope", () => {
