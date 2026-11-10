@@ -15,13 +15,15 @@ what each task actually did: tap a task to open the commands it ran, tap a comma
   above the current one, each folded to one line (`Plan 1 · 6/6 ▸`) that opens on tap. A single task added later
   belongs to the plan it follows.
 - Commands run while no task is in progress go under "Otros comandos".
-- Above the tasks, the popover and the panel show the plan of the session's ticket: its objective and its criteria with
-  their state (`✓` verificada, `○` abierta) and evidence, or «Sin plan». The ticket comes from the worktree
-  (`.claude/worktrees/<KEY>-…`), the branch or the first prompt. Its criteria, state and evidence come from
+- Over the plan in progress (under the earlier plans, which are folded), the popover and the panel show its ticket's plan:
+  its objective and its criteria with their state (`✓` verificada, `○` abierta) and evidence, or «Sin plan». The ticket
+  comes from the plan itself — the key its tasks name most — else the worktree (`.claude/worktrees/<KEY>-…`), the branch,
+  the key the session's prompts name last, or the first of its brief: a brief names a related ticket as often as its own.
+  Its criteria, state and evidence come from
   `jira_rest.py criterios <KEY>` (read as `cto`), the same reader as the Done gate: a criterion is `verificada` once a
   `- [x] <criterio> — <prueba>` line backs it in the `## Evidencia` of a merged PR or in `50-entrega.md`. The objective
   is the `## Objetivo` of the description, else of the spec, else the ticket's summary. Without ticket criteria, the
-  `## Plan`/`## Criterios` section of the worktree's `CLAUDE.md` or of the first prompt. It is rebuilt at every turn start and end and written to
+  `## Plan`/`## Criterios` section of the worktree's `CLAUDE.md` or of the brief. It is rebuilt at every turn start and end and written to
   `~/.local/state/paseo-plan/anchor-<agentId>.json`, a file contract (`CONTRACTS.yaml`) read by paseo-sugiere and the
   harness Stop hook.
 - «Garantizar plan» under the criteria switches `guard` in that file (off with no criteria); with it on, paseo-sugiere

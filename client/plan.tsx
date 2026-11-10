@@ -1,6 +1,6 @@
 import type { PluginAgentPanelProps, PluginButtonContentProps, PluginClientContext, PluginTimelineItemProps } from "@getpaseo/plugin/client";
 import { usePaseo, useRpc } from "@getpaseo/plugin/client";
-import { useEffect, useState } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import { Pressable, ScrollView, Text, View } from "react-native";
 import { knownSessions } from "./pills.ts";
 import { anchorFromTimelineItem, anchorGet, anchorGuard, type Anchor } from "../shared/anchor.ts";
@@ -99,14 +99,16 @@ function EarlierPlan({ n, tasks, theme }: { n: number; tasks: PlanData["tasks"];
   );
 }
 
-// The earlier plans folded on top, oldest first, then the latest one open.
-function PlanHistory({ data, theme }: { data: PlanData; theme: PluginTimelineItemProps["theme"] }) {
+// The earlier plans folded on top, oldest first, then the latest one open. The ticket's plan belongs to the plan in
+// progress (SC-5282), so it goes under the folded ones, right above the current one.
+function PlanHistory({ data, theme, anchor }: { data: PlanData; theme: PluginTimelineItemProps["theme"]; anchor: ReactNode }) {
   const { current, earlier } = splitPlans(data);
   return (
     <View>
       {earlier.map((tasks, i) => (
         <EarlierPlan key={tasks[0].key} n={i + 1} tasks={tasks} theme={theme} />
       ))}
+      {anchor}
       {earlier.length ? (
         <Text style={{ color: theme.colors.foregroundMuted, fontSize: 13, paddingTop: 8 }}>{`Plan ${earlier.length + 1} · actual`}</Text>
       ) : null}
@@ -209,15 +211,18 @@ function LivePlan({ agentId, theme }: { agentId: string | undefined; theme: Plug
       void sub.release().catch(() => {});
     };
   }, [paseo, getPlan, getAnchor, agentId]);
+  const anchorView = agentId ? <AnchorView agentId={agentId} anchor={anchor} onChange={setAnchor} theme={theme} /> : null;
   return (
     <View>
-      {agentId ? <AnchorView agentId={agentId} anchor={anchor} onChange={setAnchor} theme={theme} /> : null}
       {data ? (
-        <PlanHistory data={data} theme={theme} />
+        <PlanHistory data={data} theme={theme} anchor={anchorView} />
       ) : (
-        <Text style={{ color: theme.colors.foregroundMuted, fontSize: 13, paddingVertical: 12 }}>
-          {data === undefined ? "Cargando las tareas…" : "Sin tareas todavía."}
-        </Text>
+        <>
+          {anchorView}
+          <Text style={{ color: theme.colors.foregroundMuted, fontSize: 13, paddingVertical: 12 }}>
+            {data === undefined ? "Cargando las tareas…" : "Sin tareas todavía."}
+          </Text>
+        </>
       )}
     </View>
   );

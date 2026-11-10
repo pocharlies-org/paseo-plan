@@ -6,23 +6,42 @@ import { join } from "node:path";
 import { createInterface } from "node:readline";
 import { promisify } from "node:util";
 import { anchorSchema, type Anchor } from "../shared/anchor.ts";
+import { splitPlans } from "../shared/plan.ts";
+import { planFromTasks } from "./tasks.ts";
 
 const run = promisify(execFile);
 // CONTRACT: file.paseo-plan.anchor.v1 (~/.local/state/paseo-plan/anchor-<agentId>.json, shape in shared/anchor.ts)
 const ANCHOR_DIR = join(homedir(), ".local", "state", "paseo-plan");
 const JIRA = join(homedir(), ".local", "libexec", "x86-host-runtime", "jira_rest.py");
+const TASKS = join(homedir(), ".claude", "tasks");
 const KEY = /\b([A-Z][A-Z0-9]+-\d+)\b/;
+const KEYS = /\b([A-Z][A-Z0-9]+-\d+)\b/g;
 const SESSION = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 type Plan = Omit<Anchor, "guard">;
 
-/** The ticket of a session: its worktree (`.claude/worktrees/<KEY>-…`), else its branch, else the first key of its first prompt. */
-export function ticketKey(cwd: string, branch: string, prompt: string): string | null {
+// tag markup out: a prompt sent by another session comes wrapped in <paseo-system source-agent-title="<its ticket> …">
+const bare = (text: string) => text.replace(/<[^>]*>/g, " ");
+
+/** The key a text names most (a tie goes to the first that appears): a plan of six tasks naming its ticket outweighs one line naming a dependency. */
+function dominantKey(text: string): string | null {
+  const counts = new Map<string, number>();
+  for (const m of bare(text).matchAll(KEYS)) counts.set(m[1], (counts.get(m[1]) ?? 0) + 1);
+  return counts.size ? [...counts].sort(([, a], [, b]) => b - a)[0][0] : null;
+}
+
+/**
+ * The ticket of the plan a session is running: the key its current plan names most, else the worktree it works in
+ * (`.claude/worktrees/<KEY>-…`), else its branch, else the key its prompts name last, else the first of its brief. The
+ * brief alone is not enough: it names a related ticket first as often as its own (SC-5282, INFRA-1219 vs INFRA-1243).
+ */
+export function ticketKey(cwd: string, branch: string, brief: string, plan = "", later = ""): string | null {
   return (
+    dominantKey(plan) ??
     /\.claude\/worktrees\/([A-Z][A-Z0-9]+-\d+)(?![\d])/.exec(cwd)?.[1] ??
     /^([A-Z][A-Z0-9]+-\d+)(?![\d])/.exec(branch)?.[1] ??
-    // tag markup out: a prompt sent by another session comes wrapped in <paseo-system source-agent-title="<its ticket> …">
-    KEY.exec(prompt.replace(/<[^>]*>/g, " "))?.[1] ??
+    bare(later).match(KEYS)?.at(-1) ??
+    KEY.exec(bare(brief))?.[1] ??
     null
   );
 }
@@ -78,9 +97,15 @@ async function jira(key: string): Promise<Ticket> {
 
 const branchOf = (cwd: string) => run("git", ["-C", cwd, "branch", "--show-current"], { timeout: 5_000 }).then((r) => r.stdout.trim(), () => "");
 
-/** The first thing the user said in the session, from Claude Code's transcript. */
-export async function firstPrompt(cwd: string, sessionId: string | null, root = join(homedir(), ".claude", "projects")): Promise<string> {
-  if (!sessionId || !SESSION.test(sessionId)) return "";
+// What the harness injects as a user line and is not the user speaking: the supervisor's EVENTO lines and the compaction
+// recap speak of other sessions' tickets. A <task-notification> stays: it reports work of THIS session.
+// shortcut: <los inyectados se reconocen por su marca>, <canal tipado del host cuando exista>
+const INJECTED = [/^\(supervisor/, /^This session is being continued/, /^\[Request interrupted/];
+
+/** What the user said in the session, in order, from Claude Code's transcript. */
+export async function userPrompts(cwd: string, sessionId: string | null, root = join(homedir(), ".claude", "projects")): Promise<string[]> {
+  const out: string[] = [];
+  if (!sessionId || !SESSION.test(sessionId)) return out;
   const lines = createInterface({ input: createReadStream(join(root, cwd.replace(/[^a-zA-Z0-9]/g, "-"), `${sessionId}.jsonl`)), crlfDelay: Infinity });
   try {
     for await (const line of lines) {
@@ -93,25 +118,32 @@ export async function firstPrompt(cwd: string, sessionId: string | null, root = 
       if (e.type !== "user" || e.isMeta) continue;
       const c = e.message?.content;
       const text = typeof c === "string" ? c : Array.isArray(c) ? c.filter((b) => b?.type === "text").map((b) => b.text).join("\n") : "";
-      if (text.trim()) return text;
+      if (text.trim() && !INJECTED.some((re) => re.test(text.trim()))) out.push(text);
     }
   } catch {
     // no transcript yet: the session has not started
   } finally {
     lines.close();
   }
-  return "";
+  return out;
+}
+
+/** The text of the plan the session is running (its latest epoch of task files), where a plan names its own ticket. */
+async function planText(sessionId: string | null, root: string): Promise<string> {
+  const files = sessionId ? await planFromTasks(sessionId, root).catch(() => null) : null;
+  return files ? splitPlans(files).current.tasks.map((t) => t.text).join("\n") : "";
 }
 
 /**
- * The plan of a session. With a ticket, its criteria with their state and evidence as the Done gate reads them (`00-spec.md`,
- * else the description; `jira_rest.py criterios`), its objective (`## Objetivo` of the description, else of the spec, else the
- * summary) and what is out of scope. Without ticket criteria, the `## Plan`/`## Criterios` of the worktree's CLAUDE.md, else of
- * the first prompt. Null with neither a ticket nor criteria. Jira not answering throws: the caller keeps the anchor it had.
+ * The plan of the session's ticket — the one of the plan in progress, see `ticketKey` — with its criteria and their state
+ * and evidence as the Done gate reads them (`00-spec.md`, else the description; `jira_rest.py criterios`), its objective
+ * (`## Objetivo` of the description, else of the spec, else the summary) and what is out of scope. Without ticket
+ * criteria, the `## Plan`/`## Criterios` of the worktree's CLAUDE.md, else of the brief. Null with neither a ticket nor
+ * criteria. Jira not answering throws: the caller keeps the anchor it had.
  */
-export async function buildPlan(cwd: string, sessionId: string | null, read = jira): Promise<Plan | null> {
-  const prompt = await firstPrompt(cwd, sessionId);
-  const key = ticketKey(cwd, await branchOf(cwd), prompt);
+export async function buildPlan(cwd: string, sessionId: string | null, read = jira, tasksRoot = TASKS): Promise<Plan | null> {
+  const [brief = "", ...later] = await userPrompts(cwd, sessionId);
+  const key = ticketKey(cwd, await branchOf(cwd), brief, await planText(sessionId, tasksRoot), later.join("\n"));
   let plan: Plan | null = null;
   if (key) {
     const t = await read(key);
@@ -124,7 +156,7 @@ export async function buildPlan(cwd: string, sessionId: string | null, read = ji
     };
   }
   if (plan?.criterios.length) return plan;
-  for (const md of [await readFile(join(cwd, "CLAUDE.md"), "utf8").catch(() => ""), prompt]) {
+  for (const md of [await readFile(join(cwd, "CLAUDE.md"), "utf8").catch(() => ""), brief]) {
     const local = planFrom(md, key);
     if (local.criterios.length) return { ...local, objetivo: local.objetivo || plan?.objetivo || "" };
   }

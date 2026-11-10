@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { mkdtemp, mkdir, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { buildPlan, firstPrompt, planFrom, readAnchor, saveAnchor, setGuard, ticketKey, type Ticket } from "../server/anchor.ts";
+import { buildPlan, planFrom, readAnchor, saveAnchor, setGuard, ticketKey, userPrompts, type Ticket } from "../server/anchor.ts";
 
 const SPEC = `Rol: supervisor · Estado: BORRADOR
 
@@ -27,13 +27,21 @@ El Stop hook.
 - [ ] Uno
 `;
 
-test("the ticket comes from the worktree, else the branch, else the first key of the first prompt", () => {
+test("the ticket comes from the plan in progress, else the worktree, else the branch, else the prompts (SC-5282)", () => {
   assert.equal(ticketKey("/r/.claude/worktrees/SC-4804-ancla", "main", "SC-1"), "SC-4804");
   assert.equal(ticketKey("/r", "DGX-12-x", "SC-1"), "DGX-12");
   assert.equal(ticketKey("/r", "main", "Historia en vivo SC-4804 (y SC-4803)"), "SC-4804");
   assert.equal(ticketKey("/r", "main", "sin ticket"), null);
   const sent = '<paseo-system version="1" kind="agent-message" source-agent-title="SC-4804 · Pastilla">\nPrueba de SC-4805\n</paseo-system>';
   assert.equal(ticketKey("/r", "main", sent), "SC-4805", "the launching session's title is not this session's ticket");
+  // the plan in progress names its own ticket: the brief named a related one first (INFRA-1219 vs INFRA-1243)
+  assert.equal(ticketKey("/r", "main", "montar el fallback, parte de INFRA-1219", "Medir ComfyUI INFRA-1243\nInventariar el arbiter INFRA-1243"), "INFRA-1243");
+  // a dependency named once in the plan does not outweigh the ticket the plan is about
+  assert.equal(ticketKey("/r", "main", "SC-1", "Hacer SC-2\nOtra cosa\nY otra"), "SC-2");
+  // with no plan and no worktree, the key the session names last beats the one its brief named first
+  assert.equal(ticketKey("/r", "main", "SC-1 x", "", "reviso lo de SC-1 y abro SC-2"), "SC-2");
+  // a declared worktree still wins over prose
+  assert.equal(ticketKey("/r/.claude/worktrees/SC-4804-x", "main", "SC-1", "", "SC-2"), "SC-4804");
 });
 
 test("a spec gives its first criteria section, top-level items only, with the box as status; objective and out of scope", () => {
@@ -95,20 +103,41 @@ test("the objective is always there: the description's, else the spec's, else th
   assert.equal(await objetivo({}), "El resumen");
 });
 
-test("the first prompt is the first real user line of the transcript", async () => {
+test("the prompts are the user's own: the supervisor's lines, the recap and the interruptions are not", async () => {
   const root = await mkdtemp(join(tmpdir(), "anchor-tx-"));
   const sid = "6a7c0e2f-1460-4f8c-b902-027554ee8767";
-  await mkdir(join(root, "-r--claude-x"));
+  const dir = join(root, "-r--claude-x");
+  await mkdir(dir);
   const lines = [
     { type: "attachment" },
     { type: "user", isMeta: true, message: { content: "caveat" } },
     { type: "user", message: { content: [{ type: "text", text: "Historia SC-9" }] } },
+    { type: "user", message: { content: "(supervisor; no es un mensaje de Dani) EVENTO: ci org/repo#1 → verde, sigue SC-7" } },
+    { type: "user", message: { content: "<task-notification>\n<result>sweep de SC-9 limpio</result>" } },
+    { type: "user", message: { content: "This session is being continued from a previous conversation (SC-9)" } },
+    { type: "user", message: { content: "[Request interrupted by user]" } },
     { type: "user", message: { content: "después" } },
   ];
-  await writeFile(join(root, "-r--claude-x", `${sid}.jsonl`), lines.map((l) => JSON.stringify(l)).join("\n"));
-  assert.equal(await firstPrompt("/r/.claude/x", sid, root), "Historia SC-9");
-  assert.equal(await firstPrompt("/r/.claude/x", "../x", root), "");
-  assert.equal(await firstPrompt("/otra", sid, root), "");
+  await writeFile(join(dir, `${sid}.jsonl`), lines.map((l) => JSON.stringify(l)).join("\n"));
+  assert.deepEqual(await userPrompts("/r/.claude/x", sid, root), ["Historia SC-9", "<task-notification>\n<result>sweep de SC-9 limpio</result>", "después"]);
+  assert.deepEqual(await userPrompts("/r/.claude/x", "../x", root), []);
+  assert.deepEqual(await userPrompts("/otra", sid, root), []);
+});
+
+test("the anchor is the ticket of the plan in progress, not the one the brief named first (SC-5282)", async () => {
+  const cwd = await mkdtemp(join(tmpdir(), "anchor-"));
+  const sid = "1b2c3d4e-5f60-4172-8394-a5b6c7d8e9f0";
+  const tx = join(await mkdtemp(join(tmpdir(), "anchor-tx-")), cwd.replace(/[^a-zA-Z0-9]/g, "-"));
+  await mkdir(tx, { recursive: true });
+  await writeFile(join(tx, `${sid}.jsonl`), JSON.stringify({ type: "user", message: { content: "Objetivo: el fallback de STT, parte de INFRA-1219" } }));
+  const tasks = join(await mkdtemp(join(tmpdir(), "anchor-tasks-")), sid);
+  await mkdir(tasks, { recursive: true });
+  await writeFile(join(tasks, "7.json"), JSON.stringify({ id: "7", subject: "Inventariar ComfyUI (INFRA-1243)", status: "completed" }));
+  await writeFile(join(tasks, "8.json"), JSON.stringify({ id: "8", subject: "Medir ComfyUI en mac-casa, INFRA-1243", status: "in_progress" }));
+  const asked: string[] = [];
+  const plan = (await buildPlan(cwd, sid, async (key) => (asked.push(key), TICKET({ criterios: [{ texto: "c", status: "abierta", evidencia: "" }] })), join(tasks, "..")))!;
+  assert.deepEqual(asked, ["INFRA-1243"], "el plan en marcha manda sobre el brief");
+  assert.equal(plan.ticketKey, "INFRA-1243");
 });
 
 test("a refresh keeps the guard; the guard does not arm without criteria", async () => {
