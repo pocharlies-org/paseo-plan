@@ -117,7 +117,7 @@ function PlanHistory({ data, theme, anchor }: { data: PlanData; theme: PluginTim
   );
 }
 
-// The ticket's plan above the tasks (SC-4804): each criterion with its state and evidence, and «Garantizar plan».
+// The ticket's plan above the plan in progress (SC-4804): each criterion with its state and evidence, and «Garantizar plan».
 function AnchorView({ agentId, anchor, onChange, theme }: { agentId: string; anchor: Anchor | null | undefined; onChange: (a: Anchor | null) => void; theme: PluginTimelineItemProps["theme"] }) {
   const c = theme.colors;
   const setGuard = useRpc(anchorGuard);
