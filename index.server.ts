@@ -2,7 +2,7 @@ import type { PluginHookAgent, PluginHookContext, PluginServerContext } from "@g
 import { anchorGet, anchorGuard, anchorRow } from "./shared/anchor.ts";
 import { KIND, planGet, type PlanData } from "./shared/plan.ts";
 import { buildPlan, readAnchor, saveAnchor, setGuard } from "./server/anchor.ts";
-import { PlanState } from "./server/plan.ts";
+import { PlanState, ticketLink, verifyFileLinks } from "./server/plan.ts";
 import { planFromTasks } from "./server/tasks.ts";
 
 const THROTTLE_MS = 300;
@@ -62,15 +62,20 @@ export default function contribute(server: PluginServerContext) {
     let dirty = false;
     let sessionId: string | null = null;
 
-    // The live list knows no plans: each task takes its plan from the task files, so the pill counts the latest plan.
+    // The live list knows no plans and no wait lists: each task takes its plan and its explicit blockedBy from the
+    // task files, so the pill counts the latest plan and a blocked task stays blocked across live rows (SC-5089).
     const placeInPlans = async (data: PlanData) => {
       sessionId ||= await agent.refresh().then(() => {
         const current = agent.current();
         return current?.persistence?.sessionId ?? current?.runtimeInfo?.sessionId ?? null;
       }, () => null);
       const files = sessionId ? await planFromTasks(sessionId) : null;
-      const plans = new Map(files?.tasks.map((t) => [t.key, t.plan]));
-      for (const t of data.tasks) t.plan = plans.get(t.key);
+      const byKey = new Map(files?.tasks.map((t) => [t.key, t]));
+      for (const t of data.tasks) {
+        const f = byKey.get(t.key);
+        t.plan = f?.plan;
+        if (f?.blockedBy?.length) t.blockedBy = f.blockedBy;
+      }
     };
 
     let queue: Promise<void> = Promise.resolve();
@@ -84,6 +89,15 @@ export default function contribute(server: PluginServerContext) {
       const run = queue.then(async () => {
         if (!data) return;
         await placeInPlans(data);
+        // The ticket of the session (SC-4804's anchor) as a browse link only when JIRA_SITE is configured (ticketLink
+        // returns null without it: the title stays text, no URL is invented), and only the file links whose path is
+        // still there: a link in the plan points at something real (SC-5089).
+        const anchor = readAnchor(event.agent.id);
+        if (anchor?.ticketKey) {
+          const link = ticketLink(anchor.ticketKey);
+          if (link) data.ticket = link;
+        }
+        await verifyFileLinks(data);
         // placement "tail" keeps the plan the last row so streaming text appears above it (SC-2758). The old host
         // strips the field; the variable dodges the excess-property check of the pinned 0.11.2 types. shortcut: <0.11.2 types>, <bump @getpaseo/client when placement ships>
         const item = { type: "plugin" as const, id: "plan", kind: KIND, version: 1, data, placement: "tail" as const };

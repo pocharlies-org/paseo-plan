@@ -21,7 +21,7 @@ const agent = (id: string, extra: Record<string, unknown> = {}) => ({
 
 interface Pill {
   contrib: { agentId: string; workspaceId: string; button: { label?: string; behavior: { kind: string } } };
-  updates: Array<{ label?: string }>;
+  updates: Array<{ label?: string; title?: string }>;
   removed: boolean;
 }
 interface Timeline {
@@ -66,7 +66,7 @@ function harness(opts: { holdList?: boolean; holdRead?: boolean } = {}) {
       const pill: Pill = { contrib, updates: [], removed: false };
       pills.push(pill);
       return {
-        update: (patch: { label?: string }) => {
+        update: (patch: { label?: string; title?: string }) => {
           if (!pill.removed) pill.updates.push(patch);
         },
         remove: () => {
@@ -274,10 +274,36 @@ test("a slow bootstrap does not overwrite a newer live label", async () => {
   await h.flush(); // the bootstrap's read is still in flight
   h.emit("a1", { type: "timeline", item: planRow(["completed"]) });
   const pill = pillFor(h, "a1")!;
-  assert.deepEqual(pill.updates, [{ label: "Plan 1/1" }]);
+  assert.deepEqual(pill.updates, [{ label: "Plan 1/1", title: "Plan 1/1" }]);
   h.releaseRead();
   await h.flush();
-  assert.deepEqual(pill.updates, [{ label: "Plan 1/1" }]); // the stale read was discarded, not applied
+  assert.deepEqual(pill.updates, [{ label: "Plan 1/1", title: "Plan 1/1" }]); // the stale read was discarded, not applied
+});
+
+test("the pill shows progress and the active task: the label is cut short, the title keeps the full sentence", async () => {
+  const h = harness();
+  const long = "Implementar la píldora con progreso y la tarea activa accesible";
+  const row = (tasks: Array<Record<string, unknown>>) => ({ type: "plugin", id: "plan", kind: "plan-progress", version: 1, data: { tasks } });
+  h.timelineFor("a1").rows = [row([
+    { key: "0", text: "hecha", status: "completed", commands: [] },
+    { key: "1", text: long, activeForm: "Poliendo la píldora", status: "in_progress", commands: [] },
+    { key: "2", text: "pendiente", status: "pending", commands: [] },
+  ])];
+  registerPlanPills(h.client, Content);
+  await h.flush();
+  h.snapshot([agent("a1")]);
+  await h.flush();
+  const pill = pillFor(h, "a1")!;
+  assert.deepEqual(pill.updates.at(-1), { label: "Plan 1/3 · Poliendo la píldora", title: "Plan 1/3 · Poliendo la píldora" });
+  // without activeForm the task text is the sentence; it is cut at 40 characters with an ellipsis, the title is not
+  h.emit("a1", {
+    type: "timeline",
+    item: row([{ key: "0", text: "hecha", status: "completed", commands: [] }, { key: "1", text: long, status: "in_progress", commands: [] }]),
+  });
+  const last = pill.updates.at(-1)!;
+  assert.equal(last.title, `Plan 1/2 · ${long}`);
+  assert.equal(last.label, `Plan 1/2 · ${long.slice(0, 39)}…`);
+  assert.ok(last.label!.length < last.title!.length);
 });
 
 test("remove and cleanup isolate per agent and release every subscription", async () => {

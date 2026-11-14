@@ -1,30 +1,63 @@
 import type { PluginAgentPanelProps, PluginButtonContentProps, PluginClientContext, PluginTimelineItemProps } from "@getpaseo/plugin/client";
-import { usePaseo, useRpc } from "@getpaseo/plugin/client";
+import { openExternalUrl, usePaseo, useRpc } from "@getpaseo/plugin/client";
 import { useEffect, useState } from "react";
 import { Pressable, ScrollView, Text, View } from "react-native";
 import { knownSessions } from "./pills.ts";
 import { anchorFromTimelineItem, anchorGet, anchorGuard, type Anchor } from "../shared/anchor.ts";
-import { keepCommands, planFromTimelineItem, planGet, splitPlans, type PlanData } from "../shared/plan.ts";
+import { keepCommands, lastFailedCommand, planFromTimelineItem, planGet, splitPlans, taskState, type PlanData, type PlanTask } from "../shared/plan.ts";
 
-const marker = { completed: "✓", in_progress: "◐", pending: "○", other: "·" } as const;
+// The marker and color come from taskState, the state read from explicit data only (SC-5089): a pending task with an
+// unmet blockedBy is blocked (⏸, warning), never guessed from its text.
+const stateMark = { completed: "✓", running: "◐", blocked: "⏸", waiting: "○", other: "·" } as const;
 const mono = { fontFamily: "monospace", lineHeight: 18 } as const;
 
 // Flat rows, no box: the same look as Paseo's own timeline rows. Shared by the timeline card, the popover and the panel.
+// Completed commands fold by default (SC-5089): what stays open is the command running now and the last failed one —
+// the error that matters — and each command's detail still expands on tap.
 function PlanView({ data, theme }: { data: PlanData; theme: PluginTimelineItemProps["theme"] }) {
   const c = theme.colors;
-  // Undefined = never touched: the task in progress is open, the rest closed.
+  // Undefined = never touched: the task in progress and any task with a failed command open, the rest closed.
   const [toggled, setToggled] = useState<Record<string, boolean>>({});
   const [shown, setShown] = useState<Record<string, boolean>>({});
   const rule = { borderLeftWidth: 1, borderLeftColor: c.border };
   return (
     <View style={{ marginVertical: 6 }}>
       {data.tasks.map((t) => {
-        const color = t.status === "completed" ? c.statusSuccess : t.status === "in_progress" ? c.accent : c.foregroundMuted;
-        const active = t.status === "in_progress";
-        const open = toggled[t.key] ?? active;
+        const st = taskState(t, data.tasks);
+        const color = st === "completed" ? c.statusSuccess : st === "running" ? c.accent : st === "blocked" ? c.statusWarning : c.foregroundMuted;
+        const active = st === "running";
+        // The running commands and the last error stay visible; the finished ones wait behind one line. A task with a
+        // failed command opens by default even when it is not the active one: its last error must not hide behind a
+        // closed task (SC-5089). Each command keeps its original index as its key and its shown id.
+        const lastError = lastFailedCommand(t.commands);
+        const open = toggled[t.key] ?? (active || lastError !== undefined);
         const canOpen = t.commands.length > 0;
         const n = t.commands.length;
         const title = t.status === "other" ? `Ejecutó ${n} ${n === 1 ? "comando" : "comandos"}` : active ? (t.activeForm ?? t.text) : t.text;
+        const always = new Set(t.commands.filter((cmd) => cmd.status === "running" || cmd === lastError));
+        const folded = t.commands.filter((cmd) => !always.has(cmd));
+        const foldOpen = toggled[`${t.key}:fold`] ?? false;
+        const failedCount = t.commands.filter((cmd) => cmd.status === "failed").length;
+        const cmdRow = (cmd: PlanTask["commands"][number], i: number) => {
+          const id = `${t.key}:${i}`;
+          const failed = cmd.status === "failed";
+          return (
+            <View key={i} style={{ gap: 4 }}>
+              <Pressable disabled={!cmd.detail} onPress={() => setShown((s) => ({ ...s, [id]: !s[id] }))}>
+                <Text numberOfLines={1} style={{ ...mono, fontSize: 12, color: failed ? c.statusDanger : c.foregroundMuted }}>
+                  {cmd.status === "running" ? "▸ " : ""}
+                  {cmd.label}
+                  {cmd.detail ? `  ${shown[id] ? "▾" : "▸"}` : ""}
+                </Text>
+              </Pressable>
+              {shown[id] && cmd.detail ? (
+                <Text selectable style={{ ...mono, ...rule, fontSize: 11, color: c.foregroundMuted, paddingLeft: 10, marginBottom: 2 }}>
+                  {cmd.detail}
+                </Text>
+              ) : null}
+            </View>
+          );
+        };
         return (
           <View key={t.key}>
             <Pressable
@@ -32,10 +65,14 @@ function PlanView({ data, theme }: { data: PlanData; theme: PluginTimelineItemPr
               onPress={() => setToggled((s) => ({ ...s, [t.key]: !open }))}
               style={{ flexDirection: "row", alignItems: "center", gap: 10, paddingVertical: 6 }}
             >
-              <Text style={{ color, width: 18, textAlign: "center", fontSize: 15 }}>{marker[t.status]}</Text>
+              <Text style={{ color, width: 18, textAlign: "center", fontSize: 15 }}>{stateMark[st]}</Text>
               <Text style={{ color: active ? c.foreground : c.foregroundMuted, fontWeight: active ? "600" : "400", fontSize: 14, lineHeight: 20, flex: 1 }}>
                 {title}
               </Text>
+              {st === "blocked" ? <Text style={{ color: c.statusWarning, fontSize: 12 }}>bloqueado</Text> : null}
+              {!open && failedCount ? (
+                <Text style={{ color: c.statusDanger, fontSize: 12 }}>{failedCount === 1 ? "1 fallo" : `${failedCount} fallos`}</Text>
+              ) : null}
               {canOpen ? (
                 <Text style={{ color: c.foregroundMuted, fontSize: 12 }}>
                   {t.status === "other" ? "" : `${n} `}
@@ -43,32 +80,37 @@ function PlanView({ data, theme }: { data: PlanData; theme: PluginTimelineItemPr
                 </Text>
               ) : null}
             </Pressable>
+            {t.links?.length ? (
+              <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 8, marginLeft: 28, marginBottom: 2 }}>
+                {t.links.map((l) =>
+                  l.kind === "file" ? (
+                    // A file result is a path on the daemon host, not a URL: shown, selectable, never opened here.
+                    <Text key={l.href} selectable style={{ ...mono, fontSize: 11, color: c.foregroundMuted }}>{l.label}</Text>
+                  ) : (
+                    <Pressable key={l.href} onPress={() => void openExternalUrl(l.href).catch(() => {})}>
+                      <Text style={{ fontSize: 12, color: c.accent }}>{`${l.label} ↗`}</Text>
+                    </Pressable>
+                  ),
+                )}
+              </View>
+            ) : null}
             {open && canOpen ? (
               <ScrollView
                 nestedScrollEnabled
                 style={{ maxHeight: 260, marginLeft: 8, marginBottom: 4 }}
                 contentContainerStyle={{ ...rule, paddingLeft: 20, paddingVertical: 2, gap: 6 }}
               >
-                {t.commands.map((cmd, i) => {
-                  const id = `${t.key}:${i}`;
-                  const failed = cmd.status === "failed";
-                  return (
-                    <View key={i} style={{ gap: 4 }}>
-                      <Pressable disabled={!cmd.detail} onPress={() => setShown((s) => ({ ...s, [id]: !s[id] }))}>
-                        <Text numberOfLines={1} style={{ ...mono, fontSize: 12, color: failed ? c.statusDanger : c.foregroundMuted }}>
-                          {cmd.status === "running" ? "▸ " : ""}
-                          {cmd.label}
-                          {cmd.detail ? `  ${shown[id] ? "▾" : "▸"}` : ""}
-                        </Text>
-                      </Pressable>
-                      {shown[id] && cmd.detail ? (
-                        <Text selectable style={{ ...mono, ...rule, fontSize: 11, color: c.foregroundMuted, paddingLeft: 10, marginBottom: 2 }}>
-                          {cmd.detail}
-                        </Text>
-                      ) : null}
-                    </View>
-                  );
-                })}
+                {t.commands.map((cmd, i) => (always.has(cmd) ? cmdRow(cmd, i) : null))}
+                {folded.length ? (
+                  <View>
+                    <Pressable onPress={() => setToggled((s) => ({ ...s, [`${t.key}:fold`]: !foldOpen }))}>
+                      <Text style={{ ...mono, fontSize: 12, color: c.foregroundMuted }}>
+                        {`${folded.length} ${folded.length === 1 ? "completado" : "completados"} ${foldOpen ? "▾" : "▸"}`}
+                      </Text>
+                    </Pressable>
+                    {foldOpen ? folded.map((cmd) => cmdRow(cmd, t.commands.indexOf(cmd))) : null}
+                  </View>
+                ) : null}
               </ScrollView>
             ) : null}
           </View>
@@ -116,16 +158,25 @@ function PlanHistory({ data, theme }: { data: PlanData; theme: PluginTimelineIte
 }
 
 // The ticket's plan above the tasks (SC-4804): each criterion with its state and evidence, and «Garantizar plan».
-function AnchorView({ agentId, anchor, onChange, theme }: { agentId: string; anchor: Anchor | null | undefined; onChange: (a: Anchor | null) => void; theme: PluginTimelineItemProps["theme"] }) {
+// The ticket title links to its browse URL when the server row carries one (SC-5089): the key comes from the anchor,
+// the URL from the Jira site the anchor's own reader uses — never invented here.
+function AnchorView({ agentId, anchor, ticketUrl, onChange, theme }: { agentId: string; anchor: Anchor | null | undefined; ticketUrl?: string; onChange: (a: Anchor | null) => void; theme: PluginTimelineItemProps["theme"] }) {
   const c = theme.colors;
   const setGuard = useRpc(anchorGuard);
   const [busy, setBusy] = useState(false);
   if (anchor === undefined) return null;
   if (!anchor) return <Text style={{ color: c.foregroundMuted, fontSize: 13, paddingVertical: 8 }}>Sin plan</Text>;
   const disabled = busy || !anchor.criterios.length;
+  const head = anchor.ticketKey ? `Plan de ${anchor.ticketKey}` : "Plan";
   return (
     <View style={{ paddingVertical: 6, gap: 4, borderBottomWidth: 1, borderBottomColor: c.border }}>
-      <Text style={{ color: c.foreground, fontSize: 13, fontWeight: "600" }}>{anchor.ticketKey ? `Plan de ${anchor.ticketKey}` : "Plan"}</Text>
+      {ticketUrl && anchor.ticketKey ? (
+        <Pressable onPress={() => void openExternalUrl(ticketUrl).catch(() => {})}>
+          <Text style={{ color: c.foreground, fontSize: 13, fontWeight: "600" }}>{`${head} ↗`}</Text>
+        </Pressable>
+      ) : (
+        <Text style={{ color: c.foreground, fontSize: 13, fontWeight: "600" }}>{head}</Text>
+      )}
       {anchor.objetivo ? <Text style={{ color: c.foregroundMuted, fontSize: 12 }}>{anchor.objetivo}</Text> : null}
       {anchor.criterios.length ? null : <Text style={{ color: c.foregroundMuted, fontSize: 13 }}>Sin criterios</Text>}
       {anchor.criterios.map((k, i) => (
@@ -211,7 +262,7 @@ function LivePlan({ agentId, theme }: { agentId: string | undefined; theme: Plug
   }, [paseo, getPlan, getAnchor, agentId]);
   return (
     <View>
-      {agentId ? <AnchorView agentId={agentId} anchor={anchor} onChange={setAnchor} theme={theme} /> : null}
+      {agentId ? <AnchorView agentId={agentId} anchor={anchor} ticketUrl={data?.ticket?.url} onChange={setAnchor} theme={theme} /> : null}
       {data ? (
         <PlanHistory data={data} theme={theme} />
       ) : (

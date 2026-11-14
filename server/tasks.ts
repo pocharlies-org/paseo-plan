@@ -34,6 +34,9 @@ export async function planFromTasks(sessionId: string, root = join(homedir(), ".
         text: t.subject,
         ...(typeof t.activeForm === "string" ? { activeForm: t.activeForm } : {}),
         status: t.status,
+        // Claude Code's explicit wait list (SC-5089): only when the file carries it non-empty — its absence is no
+        // information, and a task is never shown as blocked because of what its text says.
+        ...(Array.isArray(t.blockedBy) && t.blockedBy.length ? { blockedBy: t.blockedBy.map(String) } : {}),
         commands: [],
       };
       // A copied file (the home moved to a volume) was born after its last change: its birth says nothing.
