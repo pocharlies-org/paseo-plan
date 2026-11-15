@@ -3,9 +3,25 @@
 A Paseo plugin that shows Claude's task list at the end of the conversation, like Claude Desktop's plan box, with
 what each task actually did: tap a task to open the commands it ran, tap a command to see its output.
 
-- The task in progress is open by default and shows the live commands; the others stay closed.
-- The same list opens from a `Plan` pill next to the composer (per Claude agent, with its progress `x/y`): the popover
-  shows the full list without scrolling the conversation.
+- The task in progress is open by default and shows the live commands, and so is any task with a failed command —
+  active or not — so its last error is never hidden; the rest stay closed. Completed commands fold under one line
+  (`N completados ▸`); what stays visible is the command running now and the last failed one, and a closed task with
+  failures says so (`2 fallos`). Each command keeps its original index as its key and its detail-expansion id, and
+  its output still expands on tap.
+- The same list opens from a `Plan` pill next to the composer (per Claude agent): its text is the progress `x/y` plus
+  the task in progress, cut short to fit the composer; the button's title carries the same sentence in full for the
+  accessible read. The popover shows the full list without scrolling the conversation.
+- States come from explicit data only (SC-5089): running, waiting and done from the task status, and **blocked** — `⏸`,
+  in warning color, with the word «bloqueado» — only when Claude Code's task file lists a `blockedBy` whose blockers
+  are not done. A task is never shown as blocked, and a command never as a CI or access failure, because of what its
+  text says: a session whose files carry no `blockedBy` simply never shows «bloqueado» (the limit of the data).
+- Tasks show their results as links, never invented ones (SC-5089): a PR/issue URL is shown only because a shell
+  command of that task printed it (https only, no credentials, no query — where tokens travel), a Jira `browse/KEY`
+  URL only from `*.atlassian.net` or the explicitly configured site, and a file only from a completed Write/Edit whose
+  path still exists on the daemon host (shown as a path, not opened). The plugin does not fetch a URL to confirm it
+  still resolves: it shows what the command produced, sanitized. The ticket title links to its browse URL only when
+  `JIRA_SITE` is explicitly configured and valid (https, no credentials, no query, no path); without it the title is
+  plain text — the plugin builds no URL from a guess.
 - And as a `Plan` panel of the right-hand sidebar (Explorer), per agent, opened from «Ver en la barra lateral» at the
   top of the popover (Paseo lists agent panels in no menu). The pill, the popover and the panel start
   from Claude Code's own task files on the daemon host (`~/.claude/tasks/<session id>/`), so the plan is there in a

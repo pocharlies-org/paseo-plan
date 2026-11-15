@@ -27,6 +27,20 @@ test("reads a session's task files in task order, skipping broken and foreign fi
   });
 });
 
+test("blockedBy comes through only when the file lists it explicitly (SC-5089)", async () => {
+  const root = await mkdtemp(join(tmpdir(), "plan-tasks-"));
+  await mkdir(join(root, SID));
+  const task = (id: string, status: string, extra = {}) =>
+    writeFile(join(root, SID, `${id}.json`), JSON.stringify({ id, subject: `t${id}`, status, ...extra }));
+  await task("1", "pending", { blockedBy: ["2"] });
+  await task("2", "pending", { blockedBy: [] });
+  await task("3", "pending");
+  const plan = await planFromTasks(SID, root);
+  assert.deepEqual(plan!.tasks.find((t) => t.key === "1")!.blockedBy, ["2"]);
+  assert.equal(plan!.tasks.find((t) => t.key === "2")!.blockedBy, undefined); // an empty list is no information
+  assert.equal(plan!.tasks.find((t) => t.key === "3")!.blockedBy, undefined);
+});
+
 test("no directory, no tasks, or anything but a session id: no plan and no filesystem access outside the root", async () => {
   const root = await mkdtemp(join(tmpdir(), "plan-tasks-"));
   assert.equal(await planFromTasks(SID, root), null);

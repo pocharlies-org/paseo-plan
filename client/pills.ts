@@ -5,7 +5,7 @@ import type {
   PluginClientContext,
 } from "@getpaseo/plugin/client";
 import type { ComponentType } from "react";
-import { planFromTimelineItem, planGet, planProgressLabel, type PlanData } from "../shared/plan.ts";
+import { planFromTimelineItem, planGet, planPillLabel, type PlanData } from "../shared/plan.ts";
 
 // The slice of the host this module uses, typed against the real API: index.client.tsx hands in the plugin context,
 // the tests hand in a fake. Keeping it free of React makes the per-agent lifecycle testable with node --test.
@@ -76,7 +76,7 @@ export function registerPlanPills(client: PlanPillClient, Content: ComponentType
     const entry = live.get(agentId);
     if (!entry) return;
     entry.tick++;
-    entry.reg.update({ label: planProgressLabel(data) });
+    entry.reg.update(planPillLabel(data)); // short text in the row, full sentence in the accessible title (SC-5089)
   };
 
   const drop = (agentId: string) => {
@@ -128,7 +128,7 @@ export function registerPlanPills(client: PlanPillClient, Content: ComponentType
       const plan = await read(sessionId);
       // dropped, re-registered, or a live row landed while reading: the files are older than what the pill shows
       if (!plan || live.get(agent.id) !== entry || entry.tick !== tick) return;
-      entry.reg.update({ label: planProgressLabel(plan) });
+      entry.reg.update(planPillLabel(plan));
     }
     void bootstrap();
   };
